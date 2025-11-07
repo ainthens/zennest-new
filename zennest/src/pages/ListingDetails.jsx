@@ -1033,7 +1033,43 @@ const ListingDetails = () => {
                   ) : null}
 
                   {/* Large Reserve Button */}
-                  <button className="w-full bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white py-3.5 rounded-xl font-semibold text-sm transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] mb-3">
+                  <button 
+                    onClick={() => {
+                      if (!user?.uid) {
+                        if (window.confirm('Please sign in to make a reservation. Would you like to sign in?')) {
+                          navigate('/login');
+                        }
+                        return;
+                      }
+                      
+                      // Validate required fields
+                      if (listing.category === 'home' && (!checkIn || !checkOut)) {
+                        alert('Please select check-in and check-out dates');
+                        return;
+                      }
+                      
+                      // Prepare booking data
+                      const bookingDataToPass = {
+                        listingId: listing.id,
+                        checkIn: checkIn || null,
+                        checkOut: checkOut || null,
+                        guests: guests,
+                        nights: nights,
+                        category: listing.category
+                      };
+                      
+                      // Store in sessionStorage as backup (in case state is lost)
+                      sessionStorage.setItem('bookingData', JSON.stringify(bookingDataToPass));
+                      
+                      // Navigate to payment page with booking data
+                      navigate('/payment', {
+                        state: {
+                          bookingData: bookingDataToPass
+                        }
+                      });
+                    }}
+                    className="w-full bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white py-3.5 rounded-xl font-semibold text-sm transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] mb-3"
+                  >
                     {listing.category === 'service' && 'Book Service'}
                     {listing.category === 'experience' && 'Book Experience'}
                     {listing.category === 'home' && 'Reserve'}
@@ -1682,7 +1718,43 @@ const ListingDetails = () => {
                   ) : null}
 
                   {/* Large Reserve Button */}
-                  <button className="w-full bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white py-3.5 rounded-xl font-semibold text-sm transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] mb-3">
+                  <button 
+                    onClick={() => {
+                      if (!user?.uid) {
+                        if (window.confirm('Please sign in to make a reservation. Would you like to sign in?')) {
+                          navigate('/login');
+                        }
+                        return;
+                      }
+                      
+                      // Validate required fields
+                      if (listing.category === 'home' && (!checkIn || !checkOut)) {
+                        alert('Please select check-in and check-out dates');
+                        return;
+                      }
+                      
+                      // Prepare booking data
+                      const bookingDataToPass = {
+                        listingId: listing.id,
+                        checkIn: checkIn || null,
+                        checkOut: checkOut || null,
+                        guests: guests,
+                        nights: nights,
+                        category: listing.category
+                      };
+                      
+                      // Store in sessionStorage as backup (in case state is lost)
+                      sessionStorage.setItem('bookingData', JSON.stringify(bookingDataToPass));
+                      
+                      // Navigate to payment page with booking data
+                      navigate('/payment', {
+                        state: {
+                          bookingData: bookingDataToPass
+                        }
+                      });
+                    }}
+                    className="w-full bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white py-3.5 rounded-xl font-semibold text-sm transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] mb-3"
+                  >
                     {listing.category === 'service' && 'Book Service'}
                     {listing.category === 'experience' && 'Book Experience'}
                     {listing.category === 'home' && 'Reserve'}

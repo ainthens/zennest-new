@@ -34,6 +34,7 @@ import UserBookings from "./pages/UserBookings";
 import UserWallet from "./pages/UserWallet";
 import UserPoints from "./pages/UserPoints";
 import Chat from "./pages/Chat";
+import PaymentProcessing from "./pages/PaymentProcessing";
 import Loading from "./components/Loading";
 
 // Error Boundary Component for better error handling
@@ -301,6 +302,16 @@ const AppContent = () => {
                   <RouteErrorBoundary>
                     <RequireGuestAuth>
                       <UserBookings />
+                    </RequireGuestAuth>
+                  </RouteErrorBoundary>
+                }
+              />
+              <Route
+                path="/payment"
+                element={
+                  <RouteErrorBoundary>
+                    <RequireGuestAuth>
+                      <PaymentProcessing />
                     </RequireGuestAuth>
                   </RouteErrorBoundary>
                 }

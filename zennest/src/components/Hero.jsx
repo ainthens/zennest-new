@@ -10,7 +10,8 @@ import LightRays from "./LightRays";
 import BlurText from "./BlurText";
 
 const handleAnimationComplete = () => {
-  console.log('Animation completed!');
+  // Animation completed - no action needed
+  // Removed console.log for cleaner console output
 };
 
 const Hero = () => {
@@ -32,22 +33,17 @@ const Hero = () => {
   // Construct optimized Cloudinary video URL with transformations
   const getOptimizedVideoUrl = () => {
     if (import.meta.env.VITE_HERO_VIDEO_URL) {
-      console.log('Using custom video URL:', import.meta.env.VITE_HERO_VIDEO_URL);
       return import.meta.env.VITE_HERO_VIDEO_URL;
     }
     if (!cloudName) {
-      console.warn('Cloudinary cloud name not configured. Check your .env file.');
+      if (import.meta.env.DEV) {
+        console.warn('Cloudinary cloud name not configured. Check your .env file.');
+      }
       return null;
     }
     
     // Remove any existing extension from public ID if present
     const publicId = heroVideoPublicId.replace(/\.(mp4|webm|mov)$/i, '');
-    
-    console.log('Cloudinary Config:', {
-      cloudName,
-      publicId,
-      heroVideoPublicId
-    });
     
     // Try base URL first (no transformations) to verify video exists
     // If you get 404, the public ID is incorrect
@@ -64,17 +60,7 @@ const Hero = () => {
     
     const optimizedUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations}/${publicId}`;
     
-    console.log('Video URLs generated:');
-    console.log('Base URL (no transformations):', baseUrl);
-    console.log('Optimized URL:', optimizedUrl);
-    console.log('\nTroubleshooting:');
-    console.log('1. Copy the base URL and paste it in your browser');
-    console.log('2. If you get 404, your VITE_HERO_VIDEO_PUBLIC_ID is incorrect');
-    console.log('3. Get the correct public ID from Cloudinary Media Library');
-    console.log('4. Or use VITE_HERO_VIDEO_URL with the full Cloudinary URL');
-    
-    // Try base URL first to ensure video exists, then use optimized
-    // You can change this to baseUrl temporarily if optimizedUrl fails
+    // Use base URL for now (can switch to optimizedUrl if needed)
     return baseUrl;
   };
 
@@ -94,10 +80,16 @@ const Hero = () => {
         try {
           await video.play();
         } catch (error) {
-          console.warn('Video autoplay prevented:', error);
+          if (import.meta.env.DEV) {
+            console.warn('Video autoplay prevented:', error);
+          }
           // Try to play on user interaction
           const playOnInteraction = () => {
-            video.play().catch(console.error);
+            video.play().catch(err => {
+              if (import.meta.env.DEV) {
+                console.error('Play failed:', err);
+              }
+            });
             document.removeEventListener('click', playOnInteraction);
             document.removeEventListener('touchstart', playOnInteraction);
           };
@@ -108,7 +100,11 @@ const Hero = () => {
 
       video.addEventListener('loadedmetadata', playVideo);
       video.addEventListener('canplay', () => {
-        video.play().catch(console.error);
+        video.play().catch(err => {
+          if (import.meta.env.DEV) {
+            console.error('Video play failed:', err);
+          }
+        });
       });
 
       return () => {
@@ -184,33 +180,25 @@ const Hero = () => {
                   errorMessage = `Video error (code: ${error.code})`;
               }
               
-              console.error('Video error details:', {
-                code: error.code,
-                message: errorMessage,
-                videoUrl: heroVideoUrl,
-                networkState: video.networkState,
-                readyState: video.readyState
-              });
+              // Only log detailed errors in development
+              if (import.meta.env.DEV) {
+                console.error('Video error:', errorMessage, heroVideoUrl);
+              }
             } else {
-              console.error('Video error (no error code):', {
-                videoUrl: heroVideoUrl,
-                networkState: video.networkState,
-                readyState: video.readyState
-              });
+              if (import.meta.env.DEV) {
+                console.error('Video error (no error code):', heroVideoUrl);
+              }
             }
-            
-            console.error('Troubleshooting tips:');
-            console.error('1. Check if the video exists in Cloudinary:', heroVideoUrl);
-            console.error('2. Verify VITE_CLOUDINARY_CLOUD_NAME is correct');
-            console.error('3. Verify VITE_HERO_VIDEO_PUBLIC_ID matches your video public ID');
-            console.error('4. Try opening the URL directly in your browser');
             
             setVideoError(errorMessage);
           }}
           onLoadedMetadata={() => {
-            console.log('Video metadata loaded');
             if (videoRef.current) {
-              videoRef.current.play().catch(err => console.warn('Play failed:', err));
+              videoRef.current.play().catch(err => {
+                if (import.meta.env.DEV) {
+                  console.warn('Video autoplay prevented:', err);
+                }
+              });
             }
           }}
         >
