@@ -40,7 +40,7 @@ npm install -g netlify-cli
 netlify login
 
 # Set the environment variable
-netlify env:set VITE_PAYPAL_CLIENT_ID "your-paypal-client-id-here"
+netlify env:set VITE_PAYPAL_CLIENT_ID "AUh8H1MBh2qSPKxSU0ZApsB3WN8SFOZ6E4vWKtGMD347Htb-NFV2wsVOh-rRr1_XHwZUgIOEJ06caKoU"
 
 # Verify it was set
 netlify env:list

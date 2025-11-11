@@ -19,6 +19,31 @@ export const sendVerificationEmail = async (userEmail, otp, userName = '') => {
       templateId: emailjsConfig.templateId
     };
 
+    // Validate configuration before proceeding
+    if (!config.publicKey || config.publicKey.trim() === '') {
+      console.error('❌ EmailJS Registration Public Key is missing');
+      return { 
+        success: false, 
+        error: 'Email service not configured. Please contact support.' 
+      };
+    }
+
+    if (!config.serviceId || config.serviceId.trim() === '') {
+      console.error('❌ EmailJS Registration Service ID is missing');
+      return { 
+        success: false, 
+        error: 'Email service not configured. Please contact support.' 
+      };
+    }
+
+    if (!config.templateId || config.templateId.trim() === '') {
+      console.error('❌ EmailJS Registration Template ID is missing');
+      return { 
+        success: false, 
+        error: 'Email template not configured. Please contact support.' 
+      };
+    }
+
     console.log('🔧 EmailJS Configuration Check (Registration Account):', {
       serviceId: config.serviceId,
       templateId: config.templateId,
@@ -26,7 +51,15 @@ export const sendVerificationEmail = async (userEmail, otp, userName = '') => {
     });
 
     // Initialize EmailJS with registration account public key
-    emailjs.init(config.publicKey);
+    try {
+      emailjs.init(config.publicKey);
+    } catch (initError) {
+      console.error('❌ EmailJS initialization failed:', initError);
+      return { 
+        success: false, 
+        error: 'Failed to initialize email service. Please try again.' 
+      };
+    }
 
     // Calculate expiration time (15 minutes from now)
     const expirationTime = new Date(Date.now() + 15 * 60 * 1000);
@@ -140,11 +173,28 @@ export const sendHostVerificationEmail = async (userEmail, otp, userName = '') =
     };
 
     // Validate template configuration
-    if (!config.hostTemplateId || config.hostTemplateId === 'template_xxxxx') {
+    if (!config.hostTemplateId || config.hostTemplateId.trim() === '' || config.hostTemplateId === 'template_xxxxx') {
       console.error('❌ Host template ID not configured');
       return { 
         success: false, 
         error: 'Email template not configured. Please contact support.' 
+      };
+    }
+
+    // Validate configuration before proceeding
+    if (!config.publicKey || config.publicKey.trim() === '') {
+      console.error('❌ EmailJS Registration Public Key is missing');
+      return { 
+        success: false, 
+        error: 'Email service not configured. Please contact support.' 
+      };
+    }
+
+    if (!config.serviceId || config.serviceId.trim() === '') {
+      console.error('❌ EmailJS Registration Service ID is missing');
+      return { 
+        success: false, 
+        error: 'Email service not configured. Please contact support.' 
       };
     }
 
@@ -158,7 +208,15 @@ export const sendHostVerificationEmail = async (userEmail, otp, userName = '') =
     });
 
     // Initialize EmailJS with registration account public key
-    emailjs.init(config.publicKey);
+    try {
+      emailjs.init(config.publicKey);
+    } catch (initError) {
+      console.error('❌ EmailJS initialization failed:', initError);
+      return { 
+        success: false, 
+        error: 'Failed to initialize email service. Please try again.' 
+      };
+    }
 
     // Calculate expiration time (15 minutes from now)
     const expirationTime = new Date(Date.now() + 15 * 60 * 1000);

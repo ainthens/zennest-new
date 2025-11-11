@@ -223,14 +223,14 @@ const HostDashboardOverview = () => {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">Dashboard Overview</h1>
-        <p className="text-sm text-gray-600">Welcome back! Here's what's happening with your listings.</p>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-1">Dashboard Overview</h1>
+        <p className="text-xs sm:text-sm text-gray-600">Welcome back! Here's what's happening with your listings.</p>
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 md:gap-6">
         {statCards.map((stat, index) => {
           const Icon = stat.icon;
           const TrendIcon = stat.change?.trend === 'up' ? FaArrowUp : stat.change?.trend === 'down' ? FaArrowDown : null;
@@ -243,7 +243,7 @@ const HostDashboardOverview = () => {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.1 }}
               onClick={() => stat.clickable && handleCardClick(stat.title)}
-              className={`bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-300 p-4 md:p-6 border border-gray-100 hover:border-gray-200 group overflow-hidden relative ${
+              className={`bg-white rounded-lg sm:rounded-xl shadow-md hover:shadow-xl transition-all duration-300 p-3 sm:p-4 md:p-6 border border-gray-100 hover:border-gray-200 group overflow-hidden relative ${
                 stat.clickable ? 'cursor-pointer active:scale-[0.98]' : ''
               }`}
               role={stat.clickable ? 'button' : 'article'}

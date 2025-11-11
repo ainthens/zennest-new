@@ -467,47 +467,53 @@ const HostRegistration = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50/20 pt-16 pb-8 px-4">
-      <div className={`mx-auto ${step === 2 ? 'max-w-6xl' : 'max-w-3xl'}`}>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50/20 pt-16 sm:pt-20 pb-8 px-4 sm:px-6">
+      <div className={`mx-auto w-full ${step === 2 ? 'max-w-6xl' : 'max-w-3xl'}`}>
         {/* Back Button */}
         {step === 1 && (
           <button
             onClick={() => navigate('/')}
-            className="mb-6 flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors group"
+            className="mb-4 sm:mb-6 flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors group text-sm sm:text-base"
           >
-            <FaArrowLeft className="text-sm group-hover:-translate-x-1 transition-transform" />
-            <span className="text-sm font-medium">Back to Home</span>
+            <FaArrowLeft className="text-xs sm:text-sm group-hover:-translate-x-1 transition-transform" />
+            <span className="text-xs sm:text-sm font-medium">Back to Home</span>
           </button>
         )}
         {step === 2 && !location.state?.fromVerification && (
           <button
             onClick={() => setStep(1)}
-            className="mb-6 flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors group"
+            className="mb-4 sm:mb-6 flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors group text-sm sm:text-base"
           >
-            <FaArrowLeft className="text-sm group-hover:-translate-x-1 transition-transform" />
-            <span className="text-sm font-medium">Back to Personal Info</span>
+            <FaArrowLeft className="text-xs sm:text-sm group-hover:-translate-x-1 transition-transform" />
+            <span className="text-xs sm:text-sm font-medium">Back to Personal Info</span>
           </button>
         )}
 
-        {/* Progress Steps - Compact */}
-        <div className="mb-8">
-          <div className="flex items-center justify-center gap-2 md:gap-3">
+        {/* Progress Steps - Mobile Optimized */}
+        <div className="mb-6 sm:mb-8">
+          <div className="flex items-center justify-between sm:justify-center gap-1 sm:gap-2 md:gap-3 max-w-md mx-auto">
             {[1, 2, 3].map((s) => (
               <React.Fragment key={s}>
-                <div className="flex flex-col items-center">
+                <div className="flex flex-col items-center flex-1 sm:flex-none">
                   <div className={`
-                    flex items-center justify-center w-10 h-10 rounded-full font-semibold text-sm
+                    flex items-center justify-center w-8 h-8 sm:w-10 sm:h-10 rounded-full font-semibold text-xs sm:text-sm
                     transition-all duration-300 ease-in-out
                     ${step >= s 
                       ? 'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-200' 
                       : 'bg-white border-2 border-gray-300 text-gray-400'
                     }
-                    ${step === s ? 'ring-4 ring-emerald-100 scale-110' : 'scale-100'}
+                    ${step === s ? 'ring-2 sm:ring-4 ring-emerald-100 scale-110' : 'scale-100'}
                   `}>
                     {step > s ? <FaCheck className="text-xs" /> : s}
                   </div>
                   <span className={`
-                    hidden md:block text-xs font-medium mt-2 transition-colors
+                    block sm:hidden text-[10px] font-medium mt-1.5 text-center transition-colors max-w-[60px] leading-tight
+                    ${step >= s ? 'text-emerald-700' : 'text-gray-400'}
+                  `}>
+                    {s === 1 ? 'Info' : s === 2 ? 'Plan' : 'Done'}
+                  </span>
+                  <span className={`
+                    hidden sm:block text-xs font-medium mt-2 transition-colors
                     ${step >= s ? 'text-emerald-700' : 'text-gray-400'}
                   `}>
                     {s === 1 ? 'Personal Info' : s === 2 ? 'Choose Plan' : 'Congratulations'}
@@ -515,13 +521,13 @@ const HostRegistration = () => {
                 </div>
                 {s < 3 && (
                   <div className={`
-                    flex-1 h-0.5 mx-2 transition-all duration-500
+                    flex-1 h-0.5 mx-1 sm:mx-2 transition-all duration-500
                     ${step > s 
                       ? 'bg-gradient-to-r from-emerald-500 to-emerald-600' 
                       : 'bg-gray-200'
                     }
                   `} 
-                  style={{ minWidth: '30px', maxWidth: '100px' }}
+                  style={{ minWidth: '20px', maxWidth: '80px' }}
                   />
                 )}
               </React.Fragment>
@@ -529,19 +535,19 @@ const HostRegistration = () => {
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-xl shadow-gray-200/50 p-6 md:p-8 border border-gray-100">
+        <div className="bg-white rounded-xl sm:rounded-2xl shadow-xl shadow-gray-200/50 p-4 sm:p-6 md:p-8 border border-gray-100">
           {/* Step 1: Account Registration */}
           {step === 1 && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="space-y-5"
+              className="space-y-4 sm:space-y-5"
             >
-              <div className="text-center mb-6">
-                <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2 leading-tight">
+              <div className="text-center mb-4 sm:mb-6">
+                <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 mb-2 leading-tight px-2">
                   Become a Zennest Host
                 </h1>
-                <p className="text-sm text-gray-600 max-w-2xl mx-auto">
+                <p className="text-xs sm:text-sm text-gray-600 max-w-2xl mx-auto px-2">
                   Create your host account and start listing your properties
                 </p>
               </div>
@@ -557,7 +563,7 @@ const HostRegistration = () => {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-semibold text-gray-800">
                     First Name <span className="text-rose-500">*</span>
@@ -572,7 +578,7 @@ const HostRegistration = () => {
                       required
                       className="w-full pl-10 pr-3 py-2.5 text-sm
                         border-2 border-gray-200 rounded-lg
-                        focus:border-emerald-500 focus:ring-3 focus:ring-emerald-100
+                        focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100
                         transition-all duration-200
                         hover:border-gray-300
                         placeholder:text-gray-400
@@ -596,7 +602,7 @@ const HostRegistration = () => {
                       required
                       className="w-full pl-10 pr-3 py-2.5 text-sm
                         border-2 border-gray-200 rounded-lg
-                        focus:border-emerald-500 focus:ring-3 focus:ring-emerald-100
+                        focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100
                         transition-all duration-200
                         hover:border-gray-300
                         placeholder:text-gray-400
@@ -621,7 +627,7 @@ const HostRegistration = () => {
                     required
                     className="w-full pl-10 pr-3 py-2.5 text-sm
                       border-2 border-gray-200 rounded-lg
-                      focus:border-emerald-500 focus:ring-3 focus:ring-emerald-100
+                      focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100
                       transition-all duration-200
                       hover:border-gray-300
                       placeholder:text-gray-400
@@ -645,17 +651,17 @@ const HostRegistration = () => {
                     required
                     className="w-full pl-10 pr-3 py-2.5 text-sm
                       border-2 border-gray-200 rounded-lg
-                      focus:border-emerald-500 focus:ring-3 focus:ring-emerald-100
+                      focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100
                       transition-all duration-200
                       hover:border-gray-300
                       placeholder:text-gray-400
                       text-gray-900 font-medium"
-                    placeholder="+1 (555) 123-4567"
+                    placeholder="+63 912 345 6789"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 {!loggedUser && (
                   <>
                     <div className="space-y-1.5">
@@ -671,7 +677,7 @@ const HostRegistration = () => {
                           onChange={handleChange}
                           required
                           minLength={6}
-                          className="w-full pl-10 pr-3 py-2.5 text-sm border-2 border-gray-200 rounded-lg focus:border-emerald-500 focus:ring-3 focus:ring-emerald-100 transition-all duration-200 hover:border-gray-300 placeholder:text-gray-400 text-gray-900 font-medium"
+                          className="w-full pl-10 pr-3 py-2.5 text-sm border-2 border-gray-200 rounded-lg focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all duration-200 hover:border-gray-300 placeholder:text-gray-400 text-gray-900 font-medium"
                           placeholder="••••••••"
                         />
                       </div>
@@ -689,7 +695,7 @@ const HostRegistration = () => {
                           onChange={handleChange}
                           required
                           minLength={6}
-                          className="w-full pl-10 pr-3 py-2.5 text-sm border-2 border-gray-200 rounded-lg focus:border-emerald-500 focus:ring-3 focus:ring-emerald-100 transition-all duration-200 hover:border-gray-300 placeholder:text-gray-400 text-gray-900 font-medium"
+                          className="w-full pl-10 pr-3 py-2.5 text-sm border-2 border-gray-200 rounded-lg focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all duration-200 hover:border-gray-300 placeholder:text-gray-400 text-gray-900 font-medium"
                           placeholder="••••••••"
                         />
                       </div>
@@ -701,23 +707,23 @@ const HostRegistration = () => {
 
               {/* Terms and Conditions */}
               <div className="space-y-3">
-                <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="flex items-start gap-2 sm:gap-3 p-3 sm:p-4 bg-gray-50 rounded-lg border border-gray-200">
                   <input
                     type="checkbox"
                     id="termsCheckbox"
                     checked={acceptedTerms}
                     onChange={(e) => setAcceptedTerms(e.target.checked)}
-                    className="mt-1 w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500 focus:ring-2 cursor-pointer"
+                    className="mt-0.5 sm:mt-1 w-4 h-4 sm:w-5 sm:h-5 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500 focus:ring-2 cursor-pointer flex-shrink-0"
                   />
                   <label htmlFor="termsCheckbox" className="flex-1 text-xs text-gray-700 leading-relaxed cursor-pointer">
                     I have read and agree to the{' '}
                     <button
                       type="button"
                       onClick={() => setShowTermsModal(true)}
-                      className="text-emerald-600 hover:text-emerald-700 font-semibold underline inline-flex items-center gap-1"
+                      className="text-emerald-600 hover:text-emerald-700 font-semibold underline inline-flex items-center gap-1 break-words"
                     >
-                      <FaFileContract className="text-xs" />
-                      Terms and Conditions
+                      <FaFileContract className="text-xs flex-shrink-0" />
+                      <span className="break-words">Terms and Conditions</span>
                     </button>
                     <span className="text-rose-500 ml-1">*</span>
                   </label>
@@ -728,7 +734,7 @@ const HostRegistration = () => {
                 onClick={handleAccountCreation}
                 disabled={loading}
                 className="w-full bg-gradient-to-r from-emerald-600 to-emerald-700 
-                  text-white py-3 px-5 rounded-lg 
+                  text-white py-3 px-4 sm:px-5 rounded-lg 
                   hover:from-emerald-700 hover:to-emerald-800 
                   transition-all duration-200 
                   font-semibold text-sm
@@ -740,12 +746,12 @@ const HostRegistration = () => {
                 {loading ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    <span>Creating Account...</span>
+                    <span className="text-xs sm:text-sm">Creating Account...</span>
                   </>
                 ) : (
                   <>
-                    <span>Continue to Email Verification</span>
-                    <span className="text-lg">→</span>
+                    <span className="text-xs sm:text-sm">Continue to Email Verification</span>
+                    <span className="text-base sm:text-lg">→</span>
                   </>
                 )}
               </button>
@@ -759,11 +765,11 @@ const HostRegistration = () => {
               animate={{ opacity: 1, y: 0 }}
               className="space-y-8"
             >
-              <div className="text-center mb-8">
-                <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-3">
+              <div className="text-center mb-6 sm:mb-8">
+                <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 mb-2 sm:mb-3 px-2">
                   Choose Your Plan
                 </h2>
-                <p className="text-base text-gray-600 max-w-2xl mx-auto">
+                <p className="text-sm sm:text-base text-gray-600 max-w-2xl mx-auto px-2">
                   Select the perfect plan for your hosting journey
                 </p>
               </div>
@@ -789,8 +795,8 @@ const HostRegistration = () => {
                 </div>
               )}
 
-              {/* Subscription Plans Grid - Improved Layout */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6 mb-8">
+              {/* Subscription Plans Grid - Mobile Optimized */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 lg:gap-6 mb-6 sm:mb-8">
                 {Object.entries(subscriptionPlans).map(([key, plan]) => {
                   const isSelected = formData.subscriptionPlan === key;
                   const IconComponent = 
@@ -806,7 +812,7 @@ const HostRegistration = () => {
                       transition={{ delay: key === 'basic' ? 0.1 : key === 'pro' ? 0.2 : 0.3 }}
                       onClick={() => setFormData(prev => ({ ...prev, subscriptionPlan: key }))}
                       className={`
-                        relative cursor-pointer rounded-2xl p-6 border-2 transition-all duration-300
+                        relative cursor-pointer rounded-xl sm:rounded-2xl p-4 sm:p-6 border-2 transition-all duration-300
                         flex flex-col h-full bg-white
                         ${isSelected && plan.popular
                           ? 'border-orange-500 shadow-xl ring-2 ring-orange-200'
@@ -818,8 +824,8 @@ const HostRegistration = () => {
                     >
                       {/* Most Popular Badge */}
                       {plan.popular && (
-                        <div className="absolute -top-3 left-1/2 transform -translate-x-1/2 z-20">
-                          <span className="px-3 py-1 bg-gradient-to-r from-orange-400 to-orange-500 text-white text-xs font-bold rounded-full shadow-lg whitespace-nowrap">
+                        <div className="absolute -top-2 sm:-top-3 left-1/2 transform -translate-x-1/2 z-20">
+                          <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-gradient-to-r from-orange-400 to-orange-500 text-white text-[10px] sm:text-xs font-bold rounded-full shadow-lg whitespace-nowrap">
                             MOST POPULAR
                           </span>
                         </div>
@@ -827,17 +833,17 @@ const HostRegistration = () => {
 
                       {/* Savings Badge */}
                       {plan.savings && (
-                        <div className="absolute top-3 -right-2 z-20">
-                          <span className="px-2.5 py-1 bg-emerald-500 text-white text-xs font-bold rounded-full shadow-md whitespace-nowrap">
+                        <div className="absolute top-2 sm:top-3 -right-1 sm:-right-2 z-20">
+                          <span className="px-2 sm:px-2.5 py-0.5 sm:py-1 bg-emerald-500 text-white text-[10px] sm:text-xs font-bold rounded-full shadow-md whitespace-nowrap">
                             Save ₱{plan.savings.toFixed(2)}
                           </span>
                         </div>
                       )}
 
                       {/* Icon */}
-                      <div className="flex justify-center mb-4 mt-1">
+                      <div className="flex justify-center mb-3 sm:mb-4 mt-1">
                         <div className={`
-                          w-14 h-14 rounded-full flex items-center justify-center transition-colors
+                          w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center transition-colors
                           ${plan.popular && isSelected
                             ? 'bg-orange-100'
                             : isSelected
@@ -846,7 +852,7 @@ const HostRegistration = () => {
                           }
                         `}>
                           <IconComponent className={`
-                            text-xl transition-colors
+                            text-lg sm:text-xl transition-colors
                             ${plan.popular && isSelected
                               ? 'text-orange-600'
                               : isSelected
@@ -858,18 +864,18 @@ const HostRegistration = () => {
                       </div>
 
                       {/* Plan Name */}
-                      <h3 className="text-lg font-bold text-gray-900 text-center mb-2">
+                      <h3 className="text-base sm:text-lg font-bold text-gray-900 text-center mb-1 sm:mb-2">
                         {plan.name}
                       </h3>
 
                       {/* Description */}
-                      <p className="text-xs text-gray-600 text-center mb-4 min-h-[2.5rem]">
+                      <p className="text-xs text-gray-600 text-center mb-3 sm:mb-4 min-h-[2.5rem] px-1">
                         {plan.description}
                       </p>
 
                       {/* Price */}
-                      <div className="text-center mb-5">
-                        <div className="text-2xl font-black text-gray-900 mb-1">
+                      <div className="text-center mb-4 sm:mb-5">
+                        <div className="text-xl sm:text-2xl font-black text-gray-900 mb-1">
                           {plan.priceText.split(' / ')[0]}
                         </div>
                         <div className="text-xs text-gray-500 font-medium">
@@ -878,7 +884,7 @@ const HostRegistration = () => {
                       </div>
 
                       {/* Features */}
-                      <ul className="space-y-2 mb-6 flex-grow">
+                      <ul className="space-y-1.5 sm:space-y-2 mb-4 sm:mb-6 flex-grow">
                         {plan.features.map((feature, idx) => (
                           <li key={idx} className="flex items-start gap-2">
                             <FaCheckCircle className={`
@@ -909,7 +915,7 @@ const HostRegistration = () => {
                           setFormData(prev => ({ ...prev, subscriptionPlan: key }));
                         }}
                         className={`
-                          w-full py-2.5 px-4 rounded-lg font-semibold text-sm transition-all mt-auto
+                          w-full py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg font-semibold text-xs sm:text-sm transition-all mt-auto
                           ${isSelected && plan.popular
                             ? 'bg-orange-500 text-white hover:bg-orange-600 shadow-lg'
                             : isSelected
@@ -926,35 +932,35 @@ const HostRegistration = () => {
               </div>
 
               {/* Payment Section */}
-              <div className="bg-white rounded-2xl p-6 md:p-8 border-2 border-gray-200 shadow-lg max-w-3xl mx-auto">
-                <div className="text-center mb-6">
-                  <h3 className="text-2xl font-bold text-gray-900 mb-2 flex items-center justify-center gap-3">
-                    <FaCreditCard className="text-emerald-600 text-xl" />
+              <div className="bg-white rounded-xl sm:rounded-2xl p-4 sm:p-6 md:p-8 border-2 border-gray-200 shadow-lg max-w-3xl mx-auto">
+                <div className="text-center mb-4 sm:mb-6">
+                  <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-2 flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3">
+                    <FaCreditCard className="text-emerald-600 text-lg sm:text-xl" />
                     <span>Complete Payment</span>
                   </h3>
-                  <p className="text-base text-gray-600">
+                  <p className="text-sm sm:text-base text-gray-600 px-2">
                     Pay securely with PayPal to activate your <span className="font-semibold text-emerald-700">{subscriptionPlans[formData.subscriptionPlan].name}</span> subscription
                   </p>
                 </div>
 
                 {/* Selected Plan Summary */}
-                <div className="bg-gradient-to-br from-emerald-50 to-white rounded-xl p-5 mb-6 border-2 border-emerald-200">
-                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-                    <div className="text-center sm:text-left">
-                      <h4 className="text-lg font-bold text-gray-900 mb-1">
+                <div className="bg-gradient-to-br from-emerald-50 to-white rounded-lg sm:rounded-xl p-4 sm:p-5 mb-4 sm:mb-6 border-2 border-emerald-200">
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
+                    <div className="text-center sm:text-left w-full sm:w-auto">
+                      <h4 className="text-base sm:text-lg font-bold text-gray-900 mb-1">
                         {subscriptionPlans[formData.subscriptionPlan].name} Plan
                       </h4>
-                      <p className="text-sm text-gray-600">
+                      <p className="text-xs sm:text-sm text-gray-600">
                         {subscriptionPlans[formData.subscriptionPlan].listingLimit === -1 
                           ? 'Unlimited listings' 
                           : `Up to ${subscriptionPlans[formData.subscriptionPlan].listingLimit} property listings`}
                       </p>
                     </div>
-                    <div className="text-center sm:text-right">
-                      <div className="text-3xl font-black text-emerald-700">
+                    <div className="text-center sm:text-right w-full sm:w-auto">
+                      <div className="text-2xl sm:text-3xl font-black text-emerald-700">
                         {subscriptionPlans[formData.subscriptionPlan].priceText.split(' / ')[0]}
                       </div>
-                      <div className="text-sm text-gray-500 font-medium">
+                      <div className="text-xs sm:text-sm text-gray-500 font-medium">
                         {subscriptionPlans[formData.subscriptionPlan].priceText.split(' / ')[1]}
                       </div>
                     </div>
@@ -973,7 +979,7 @@ const HostRegistration = () => {
                 )}
 
                 {import.meta.env.VITE_PAYPAL_CLIENT_ID && import.meta.env.VITE_PAYPAL_CLIENT_ID !== 'your-paypal-client-id-here' ? (
-                  <div className="bg-gray-50 rounded-xl p-6 border-2 border-gray-200">
+                  <div className="bg-gray-50 rounded-lg sm:rounded-xl p-4 sm:p-6 border-2 border-gray-200">
                     <PayPalScriptProvider
                       options={{
                         'client-id': import.meta.env.VITE_PAYPAL_CLIENT_ID,
@@ -1012,13 +1018,13 @@ const HostRegistration = () => {
                     </PayPalScriptProvider>
                   </div>
                 ) : (
-                  <div className="p-4 bg-gradient-to-r from-amber-50 to-yellow-50 border-l-4 border-amber-500 rounded-lg shadow-sm">
-                    <div className="flex items-start gap-3">
-                      <div className="flex-shrink-0 w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center mt-0.5">
-                        <span className="text-white text-xs font-bold">!</span>
+                  <div className="p-3 sm:p-4 bg-gradient-to-r from-amber-50 to-yellow-50 border-l-4 border-amber-500 rounded-lg shadow-sm">
+                    <div className="flex items-start gap-2 sm:gap-3">
+                      <div className="flex-shrink-0 w-4 h-4 sm:w-5 sm:h-5 bg-amber-500 rounded-full flex items-center justify-center mt-0.5">
+                        <span className="text-white text-[10px] sm:text-xs font-bold">!</span>
                       </div>
-                      <div>
-                        <p className="text-amber-800 text-sm font-semibold mb-1">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-amber-800 text-xs sm:text-sm font-semibold mb-1">
                           ⚠️ PayPal Client ID not configured
                         </p>
                         <p className="text-amber-700 text-xs mb-1">
@@ -1049,17 +1055,17 @@ const HostRegistration = () => {
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
                 transition={{ duration: 0.6, type: 'spring' }}
-                className="relative inline-block mb-8"
+                className="relative inline-block mb-6 sm:mb-8"
               >
-                <div className="w-32 h-32 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-full flex items-center justify-center shadow-2xl shadow-emerald-200">
-                  <FaCheckCircle className="text-6xl text-white" />
+                <div className="w-24 h-24 sm:w-32 sm:h-32 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-full flex items-center justify-center shadow-2xl shadow-emerald-200">
+                  <FaCheckCircle className="text-4xl sm:text-6xl text-white" />
                 </div>
                 {/* Animated rings */}
                 <motion.div
                   initial={{ scale: 1, opacity: 0.3 }}
                   animate={{ scale: 1.5, opacity: 0 }}
                   transition={{ duration: 2, repeat: Infinity }}
-                  className="absolute inset-0 w-32 h-32 bg-emerald-400 rounded-full"
+                  className="absolute inset-0 w-24 h-24 sm:w-32 sm:h-32 bg-emerald-400 rounded-full"
                 />
               </motion.div>
               
@@ -1067,7 +1073,7 @@ const HostRegistration = () => {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.2 }}
-                className="text-3xl md:text-4xl font-bold text-gray-900 mb-4"
+                className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 mb-3 sm:mb-4 px-2"
               >
                 Congratulations! 🎉
               </motion.h2>
@@ -1076,7 +1082,7 @@ const HostRegistration = () => {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.3 }}
-                className="text-xl text-gray-700 mb-2 font-semibold"
+                className="text-lg sm:text-xl text-gray-700 mb-2 font-semibold px-2"
               >
                 You are now a part of Zennest Hosting Service!
               </motion.p>
@@ -1085,7 +1091,7 @@ const HostRegistration = () => {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.4 }}
-                className="text-sm text-gray-600 mb-8 max-w-lg mx-auto leading-relaxed"
+                className="text-sm text-gray-600 mb-6 sm:mb-8 max-w-lg mx-auto leading-relaxed px-2"
               >
                 Your {subscriptionPlans[formData.subscriptionPlan]?.name} subscription has been activated successfully. 
                 You can now start listing your properties and welcoming guests!
@@ -1096,27 +1102,27 @@ const HostRegistration = () => {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.5 }}
-                className="bg-gradient-to-br from-emerald-50 to-white rounded-xl p-6 mb-8 border-2 border-emerald-200 shadow-md max-w-md mx-auto"
+                className="bg-gradient-to-br from-emerald-50 to-white rounded-lg sm:rounded-xl p-4 sm:p-6 mb-6 sm:mb-8 border-2 border-emerald-200 shadow-md max-w-md mx-auto w-full"
               >
-                <h3 className="text-lg font-bold text-gray-900 mb-4">Subscription Details</h3>
+                <h3 className="text-base sm:text-lg font-bold text-gray-900 mb-3 sm:mb-4">Subscription Details</h3>
                 <div className="space-y-2 text-left">
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">Plan:</span>
-                    <span className="text-sm font-semibold text-gray-900">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs sm:text-sm text-gray-600">Plan:</span>
+                    <span className="text-xs sm:text-sm font-semibold text-gray-900">
                       {subscriptionPlans[formData.subscriptionPlan]?.name}
                     </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">Amount Paid:</span>
-                    <span className="text-sm font-semibold text-emerald-700">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs sm:text-sm text-gray-600">Amount Paid:</span>
+                    <span className="text-xs sm:text-sm font-semibold text-emerald-700">
                       {paymentDetails?.paidAmount 
                         ? `₱${paymentDetails.paidAmount.toLocaleString()}` 
                         : `₱${subscriptionPlans[formData.subscriptionPlan]?.price.toLocaleString()}`}
                     </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">Listing Limit:</span>
-                    <span className="text-sm font-semibold text-gray-900">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs sm:text-sm text-gray-600">Listing Limit:</span>
+                    <span className="text-xs sm:text-sm font-semibold text-gray-900">
                       {subscriptionPlans[formData.subscriptionPlan]?.listingLimit === -1 
                         ? 'Unlimited' 
                         : `${subscriptionPlans[formData.subscriptionPlan]?.listingLimit} listings`}
@@ -1129,17 +1135,17 @@ const HostRegistration = () => {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.6 }}
-                className="flex flex-col sm:flex-row gap-4 justify-center"
+                className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center px-4"
               >
                 <button
                   onClick={() => navigate('/host/dashboard')}
-                  className="px-8 py-3 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white font-bold rounded-lg hover:from-emerald-700 hover:to-emerald-800 transition-all shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
+                  className="w-full sm:w-auto px-6 sm:px-8 py-2.5 sm:py-3 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white font-bold text-sm sm:text-base rounded-lg hover:from-emerald-700 hover:to-emerald-800 transition-all shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
                 >
                   Go to Dashboard
                 </button>
                 <button
                   onClick={() => navigate('/host/listings/new')}
-                  className="px-8 py-3 bg-white text-emerald-700 font-bold rounded-lg border-2 border-emerald-600 hover:bg-emerald-50 transition-all shadow-md hover:shadow-lg transform hover:scale-105 active:scale-95"
+                  className="w-full sm:w-auto px-6 sm:px-8 py-2.5 sm:py-3 bg-white text-emerald-700 font-bold text-sm sm:text-base rounded-lg border-2 border-emerald-600 hover:bg-emerald-50 transition-all shadow-md hover:shadow-lg transform hover:scale-105 active:scale-95"
                 >
                   Create Your First Listing
                 </button>
@@ -1163,15 +1169,15 @@ const HostRegistration = () => {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-hidden"
+              className="bg-white rounded-xl sm:rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] sm:max-h-[85vh] overflow-hidden mx-2 sm:mx-4"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Modal Header */}
-              <div className="sticky top-0 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white p-6 flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
-                    <FaFileContract />
-                    {termsAndConditions.title}
+              <div className="sticky top-0 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white p-4 sm:p-6 flex items-center justify-between">
+                <div className="flex-1 min-w-0 pr-2">
+                  <h2 className="text-lg sm:text-xl md:text-2xl font-bold flex items-center gap-2">
+                    <FaFileContract className="flex-shrink-0" />
+                    <span className="truncate">{termsAndConditions.title}</span>
                   </h2>
                   <p className="text-xs text-emerald-100 mt-1">
                     Last Updated: {termsAndConditions.lastUpdated}
@@ -1179,23 +1185,24 @@ const HostRegistration = () => {
                 </div>
                 <button
                   onClick={() => setShowTermsModal(false)}
-                  className="p-2 hover:bg-emerald-800 rounded-lg transition-colors"
+                  className="p-2 hover:bg-emerald-800 rounded-lg transition-colors flex-shrink-0"
+                  aria-label="Close modal"
                 >
-                  <FaTimes className="text-xl" />
+                  <FaTimes className="text-lg sm:text-xl" />
                 </button>
               </div>
 
               {/* Modal Content */}
-              <div className="overflow-y-auto max-h-[calc(85vh-200px)] p-6 space-y-6">
+              <div className="overflow-y-auto max-h-[calc(90vh-180px)] sm:max-h-[calc(85vh-200px)] p-4 sm:p-6 space-y-4 sm:space-y-6">
                 {termsAndConditions.sections.map((section, index) => (
-                  <div key={index} className="space-y-3">
-                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                  <div key={index} className="space-y-2 sm:space-y-3">
+                    <h3 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
                       {section.title}
                     </h3>
-                    <ul className="space-y-2 ml-4">
+                    <ul className="space-y-1.5 sm:space-y-2 ml-2 sm:ml-4">
                       {section.content.map((item, idx) => (
                         <li key={idx} className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                          <span className="text-emerald-600 mt-1">•</span>
+                          <span className="text-emerald-600 mt-1 flex-shrink-0">•</span>
                           <span>{item}</span>
                         </li>
                       ))}
@@ -1211,20 +1218,20 @@ const HostRegistration = () => {
               </div>
 
               {/* Modal Footer */}
-              <div className="sticky bottom-0 bg-gray-50 p-6 border-t border-gray-200 flex flex-col sm:flex-row gap-3">
+              <div className="sticky bottom-0 bg-gray-50 p-4 sm:p-6 border-t border-gray-200 flex flex-col sm:flex-row gap-2 sm:gap-3">
                 <button
                   onClick={() => {
                     setAcceptedTerms(true);
                     setShowTermsModal(false);
                   }}
-                  className="flex-1 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white py-3 px-5 rounded-lg hover:from-emerald-700 hover:to-emerald-800 transition-all duration-200 font-semibold text-sm shadow-lg shadow-emerald-200 flex items-center justify-center gap-2"
+                  className="w-full sm:flex-1 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white py-2.5 sm:py-3 px-4 sm:px-5 rounded-lg hover:from-emerald-700 hover:to-emerald-800 transition-all duration-200 font-semibold text-xs sm:text-sm shadow-lg shadow-emerald-200 flex items-center justify-center gap-2"
                 >
-                  <FaCheck className="text-sm" />
+                  <FaCheck className="text-xs sm:text-sm" />
                   Accept Terms
                 </button>
                 <button
                   onClick={() => setShowTermsModal(false)}
-                  className="flex-1 bg-white text-gray-700 py-3 px-5 rounded-lg border-2 border-gray-300 hover:bg-gray-50 transition-all duration-200 font-semibold text-sm"
+                  className="w-full sm:flex-1 bg-white text-gray-700 py-2.5 sm:py-3 px-4 sm:px-5 rounded-lg border-2 border-gray-300 hover:bg-gray-50 transition-all duration-200 font-semibold text-xs sm:text-sm"
                 >
                   Close
                 </button>
