@@ -1,6 +1,6 @@
 [build]
   command = "npm run build"
-  publish = "src"        # set to your actual output folder (dist, public, build, etc)
+  publish = "dist"        # set to your actual output folder (dist, public, build, etc)
   functions = "functions"  # optional
 
 [[redirects]]
