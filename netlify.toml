@@ -1,9 +1,10 @@
 [build]
-command = "npm run build"
-publish="/build'
-base = "/"
+  command = "npm run build"
+  publish = "src"        # set to your actual output folder (dist, public, build, etc)
+  functions = "functions"  # optional
 
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+  force = true
