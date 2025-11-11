@@ -1,9 +1,10 @@
 [build]
-  command = "npm run build"
-  publish = "dist"
+  command = "cd zennest && npm install && npm run build"
+  publish = "zennest/dist"
 
 # Optional: include redirect rules for SPA routing
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+
