@@ -1,10 +1,11 @@
 // src/components/Hero.jsx
-import React, { useState, forwardRef, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
+import { useInView } from "react-intersection-observer";
 import waveSvg from "../assets/wave (1).svg";
-import { FaSearch, FaCalendarAlt } from "react-icons/fa";
-import DatePicker from "react-datepicker";
-import "react-datepicker/dist/react-datepicker.css";
+import heroVideo from "../assets/homestays_video.webm";
+import { FaUmbrellaBeach, FaCity, FaMountain, FaUtensils } from "react-icons/fa";
 import LightRays from "./LightRays";
 import BlurText from "./BlurText";
 
@@ -15,55 +16,16 @@ const handleAnimationComplete = () => {
 
 const Hero = () => {
   const navigate = useNavigate();
-  const [checkIn, setCheckIn] = useState(null);
-  const [checkOut, setCheckOut] = useState(null);
-  const [location, setLocation] = useState('');
-  const [guests, setGuests] = useState(1);
-
   const [mounted, setMounted] = useState(false);
   const [videoError, setVideoError] = useState(null);
   const videoRef = React.useRef(null);
+  const [heroRef, heroInView] = useInView({
+    triggerOnce: true,
+    threshold: 0.2,
+  });
 
-  // Get Cloudinary configuration
-  const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-  const heroVideoPublicId = import.meta.env.VITE_HERO_VIDEO_PUBLIC_ID || 'hero-video';
-  
-  // Construct optimized Cloudinary video URL with transformations
-  const getOptimizedVideoUrl = () => {
-    if (import.meta.env.VITE_HERO_VIDEO_URL) {
-      return import.meta.env.VITE_HERO_VIDEO_URL;
-    }
-    if (!cloudName) {
-      if (import.meta.env.DEV) {
-        console.warn('Cloudinary cloud name not configured. Check your .env file.');
-      }
-      return null;
-    }
-    
-    // Remove any existing extension from public ID if present
-    const publicId = heroVideoPublicId.replace(/\.(mp4|webm|mov)$/i, '');
-    
-    // Try base URL first (no transformations) to verify video exists
-    // If you get 404, the public ID is incorrect
-    const baseUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${publicId}`;
-    
-    // If base URL works, add transformations for optimization
-    const transformations = [
-      'q_auto:best',      // High quality with automatic optimization
-      'w_1920',           // Full HD width
-      'h_1080',           // Full HD height
-      'c_fill',           // Fill area while maintaining aspect ratio
-      'f_auto'            // Automatic format selection
-    ].join(',');
-    
-    const optimizedUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations}/${publicId}`;
-    
-    // Use base URL for now (can switch to optimizedUrl if needed)
-    return baseUrl;
-  };
-
-  const heroVideoUrl = getOptimizedVideoUrl();
-
+  // Use local video from assets folder
+  const heroVideoUrl = heroVideo;
   useEffect(() => {
     const t = setTimeout(() => setMounted(true), 50);
     return () => clearTimeout(t);
@@ -111,47 +73,8 @@ const Hero = () => {
     }
   }, [heroVideoUrl]);
 
-  const CustomDateInput = forwardRef(
-    ({ value, onClick, placeholder, className }, ref) => (
-      <div className={`relative ${className || ""}`}>
-        <input
-          onClick={onClick}
-          ref={ref}
-          value={value}
-          placeholder={placeholder}
-          readOnly
-          className="w-full p-3 rounded-lg bg-white text-gray-800 text-sm border-2 border-gray-300 hover:border-emerald-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500 cursor-pointer placeholder-gray-400 transition-colors"
-        />
-        <FaCalendarAlt className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm pointer-events-none" />
-      </div>
-    )
-  );
-
-  const handleSearch = (e) => {
-    e.preventDefault();
-    const params = new URLSearchParams();
-    if (location.trim()) params.set('location', location.trim());
-    if (checkIn) params.set('checkIn', checkIn.toISOString().split('T')[0]);
-    if (checkOut) params.set('checkOut', checkOut.toISOString().split('T')[0]);
-    if (guests > 1) params.set('guests', guests.toString());
-    
-    navigate(`/homestays${params.toString() ? `?${params.toString()}` : ''}`);
-  };
 
 
-  // Generate poster image (thumbnail from first frame) for better loading experience
-  const getPosterUrl = () => {
-    if (!cloudName) return undefined;
-    const posterTransformations = [
-      'so_0',        // First frame (start offset 0)
-      'q_auto:good', // Good quality for poster
-      'w_1920',
-      'h_1080',
-      'c_fill',
-      'f_jpg'        // JPG format for poster
-    ].join(',');
-    return `https://res.cloudinary.com/${cloudName}/video/upload/${posterTransformations}/${heroVideoPublicId}.jpg`;
-  };
 
   return (
     <section className="relative min-h-screen flex items-center overflow-hidden pt-20 sm:pt-16 pb-12 sm:pb-8">
@@ -165,7 +88,6 @@ const Hero = () => {
           playsInline
           className="absolute inset-0 w-full h-full object-cover z-0"
           preload="auto"
-          poster={getPosterUrl()}
           onError={(e) => {
             const video = e.target;
             const error = video.error;
@@ -211,13 +133,12 @@ const Hero = () => {
             }
           }}
         >
-          {/* Cloudinary's f_auto will automatically serve the best format (webm/mp4) */}
-          <source src={heroVideoUrl} type="video/mp4" />
+          <source src={heroVideoUrl} type="video/webm" />
           Your browser does not support the video tag.
         </video>
       ) : (
         <div className="absolute inset-0 bg-gray-900 z-0 flex items-center justify-center">
-          <p className="text-white text-sm">Video configuration missing</p>
+          <p className="text-white text-sm">Video not found</p>
         </div>
       )}
       {videoError && (
@@ -244,167 +165,132 @@ const Hero = () => {
       <div className="absolute inset-0 bg-black/20 sm:bg-black/10 z-10"></div>
 
       {/* Content Grid */}
-      <div className="relative z-20 max-w-7xl mx-auto w-full px-4 sm:px-6 md:px-12 grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8 lg:gap-12">
-        {/* Left Column */}
-        <div className="flex flex-col justify-center text-white space-y-4 sm:space-y-5 md:space-y-6 order-2 lg:order-1 px-2 sm:px-0">
-          <BlurText
-            text="Find your Sanctuary"
-            delay={150}
-            animateBy="words"
-            direction="top"
-            onAnimationComplete={handleAnimationComplete}
-            className="text-2xl xs:text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-semibold leading-tight text-center lg:text-left px-1"
-          />
-          <p
-            className={`text-xs xs:text-sm sm:text-base md:text-lg max-w-md mx-auto lg:mx-0 text-center lg:text-left leading-relaxed px-2 sm:px-0 transform transition-all duration-700 ease-out
-              ${mounted ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4"}`}
-            style={{ transitionDelay: "220ms" }}
-          >
-            Discover unique stays and unforgettable experiences across the
-            Philippines. From serene rest houses to vibrant city tours, find
-            your perfect escape.
-          </p>
+      <div className="relative z-20 max-w-7xl mx-auto w-full px-4 sm:px-6 md:px-12">
+        <div className="flex flex-col lg:grid lg:grid-cols-2 gap-6 sm:gap-8 lg:gap-12">
+          {/* Left Column */}
+          <div className="flex flex-col justify-center text-white space-y-4 sm:space-y-5 md:space-y-6 px-2 sm:px-0">
+            <BlurText
+              text="Find your Sanctuary"
+              delay={150}
+              animateBy="words"
+              direction="top"
+              onAnimationComplete={handleAnimationComplete}
+              className="text-2xl xs:text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-semibold leading-tight text-center lg:text-left px-1"
+            />
 
-          {/* Buttons */}
-          <div
-            className={`flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center lg:justify-start px-2 sm:px-0 transform transition-all duration-700 ease-out
-              ${mounted ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-3"}`}
-            style={{ transitionDelay: "320ms" }}
-          >
-            <button className="bg-emerald-700 px-5 sm:px-6 py-2.5 sm:py-3 rounded-lg font-semibold text-xs sm:text-sm hover:bg-emerald-800 transition transform hover:-translate-y-0.5 active:scale-95">
-              Explore Now
-            </button>
-            <button className="px-5 sm:px-6 py-2.5 sm:py-3 border border-white rounded-lg font-semibold text-xs sm:text-sm hover:bg-white/10 transition transform hover:-translate-y-0.5 active:scale-95">
-              About us
-            </button>
-          </div>
+            <p
+              className={`text-xs xs:text-sm sm:text-base md:text-lg max-w-md mx-auto lg:mx-0 text-center lg:text-left leading-relaxed px-2 sm:px-0 transform transition-all duration-700 ease-out
+                ${mounted ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4"}`}
+              style={{ transitionDelay: "220ms" }}
+            >
+              Discover unique stays and unforgettable experiences across the
+              Philippines. From serene rest houses to vibrant city tours, find
+              your perfect escape.
+            </p>
 
-          {/* Become a Host CTA */}
-          <div
-            className={`transform transition-all duration-700 ease-out text-center lg:text-left px-2 sm:px-0
-              ${mounted ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-3"}`}
-            style={{ transitionDelay: "500ms" }}
-          >
-            <div className="mt-4 sm:mt-6">
-              <p className="text-sm sm:text-base md:text-lg font-semibold text-white leading-tight">
-                Be a part of Zennest
-              </p>
-              <p className="text-xs sm:text-sm text-white/80 mt-1 px-2 sm:px-0">
-                Share your space and welcome guests across the Philippines.
-              </p>
-              <div className="mt-3 sm:mt-3">
-                <button
-                  type="button"
-                  onClick={() => navigate('/host/register')}
-                  className="inline-flex items-center justify-center px-4 sm:px-5 py-2 sm:py-2.5 rounded-lg bg-white/12 backdrop-blur-sm border border-white/30 text-white text-xs sm:text-sm font-semibold hover:bg-white/20 transition shadow-sm active:scale-95"
-                  aria-label="Become a host"
-                >
-                  Become a host
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column - Search Form */}
-        <div
-          className={`relative z-30 group overflow-hidden bg-white/20 sm:bg-white/15 backdrop-blur-md sm:backdrop-blur-sm border border-white/30 sm:border-white/20 rounded-xl p-4 sm:p-6 shadow-xl text-white transform transition-all duration-700 ease-out
-            w-full max-w-md mx-auto lg:mx-0 lg:w-96 self-start justify-self-center lg:justify-self-end order-1 lg:order-2
-            ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"}`}
-          style={{ transitionDelay: "180ms" }}
-        >
-          <span className="absolute top-0 left-[-50%] h-full w-1/2 pointer-events-none shine"></span>
-          <h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Plan your journey</h2>
-          <form onSubmit={handleSearch} className="space-y-3 sm:space-y-4">
-            {/* Where */}
-            <div>
-              <label htmlFor="where" className="block text-xs font-medium text-white mb-1.5">
-                Where?
-              </label>
-              <input
-                type="text"
-                id="where"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="e.g. Palawan, Siargao"
-                className="w-full p-3 rounded-lg bg-white text-gray-800 border-2 border-gray-300 hover:border-emerald-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500 text-sm placeholder-gray-400 transition-colors"
-              />
+            {/* Buttons */}
+            <div
+              className={`flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center lg:justify-start px-2 sm:px-0 transform transition-all duration-700 ease-out
+                ${mounted ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-3"}`}
+              style={{ transitionDelay: "320ms" }}
+            >
+              <button className="bg-emerald-700 px-5 sm:px-6 py-2.5 sm:py-3 rounded-lg font-semibold text-xs sm:text-sm hover:bg-emerald-800 transition transform hover:-translate-y-0.5 active:scale-95">
+                Explore Now
+              </button>
+              <button className="px-5 sm:px-6 py-2.5 sm:py-3 border border-white rounded-lg font-semibold text-xs sm:text-sm hover:bg-white/10 transition transform hover:-translate-y-0.5 active:scale-95">
+                About us
+              </button>
             </div>
 
-            {/* Check-in */}
-            <div>
-              <label htmlFor="checkin" className="block text-xs font-medium text-white mb-1.5">
-                Check-in
-              </label>
-              <DatePicker
-                selected={checkIn}
-                onChange={(date) => setCheckIn(date)}
-                selectsStart
-                startDate={checkIn}
-                endDate={checkOut}
-                minDate={new Date()}
-                dateFormat="dd/MM/yyyy"
-                placeholderText="Select date"
-                customInput={<CustomDateInput className="w-full" />}
-                wrapperClassName="w-full"
-                popperClassName="z-50"
-              />
-            </div>
-
-            {/* Check-out */}
-            <div>
-              <label htmlFor="checkout" className="block text-xs font-medium text-white mb-1.5">
-                Check-out
-              </label>
-              <DatePicker
-                selected={checkOut}
-                onChange={(date) => setCheckOut(date)}
-                selectsEnd
-                startDate={checkIn}
-                endDate={checkOut}
-                minDate={checkIn || new Date()}
-                dateFormat="dd/MM/yyyy"
-                placeholderText="Select date"
-                customInput={<CustomDateInput className="w-full" />}
-                wrapperClassName="w-full"
-                popperClassName="z-50"
-              />
-            </div>
-
-            {/* Guests */}
-            <div>
-              <label htmlFor="guests" className="block text-xs font-medium text-white mb-1.5">
-                Who (Guests)
-              </label>
-              <div className="border-2 border-gray-300 rounded-lg bg-white hover:border-emerald-500 focus-within:border-emerald-500 transition-colors">
-                <div className="flex items-center justify-between p-3">
+            {/* Become a Host CTA */}
+            <div
+              className={`transform transition-all duration-700 ease-out text-center lg:text-left px-2 sm:px-0
+                ${mounted ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-3"}`}
+              style={{ transitionDelay: "500ms" }}
+            >
+              <div className="mt-4 sm:mt-6">
+                <p className="text-sm sm:text-base md:text-lg font-semibold text-white leading-tight">
+                  Be a part of Zennest
+                </p>
+                <p className="text-xs sm:text-sm text-white/80 mt-1 px-2 sm:px-0">
+                  Share your space and welcome guests across the Philippines.
+                </p>
+                <div className="mt-3 sm:mt-3">
                   <button
                     type="button"
-                    onClick={() => setGuests(Math.max(1, guests - 1))}
-                    className="w-8 h-8 rounded-full border-2 border-gray-300 hover:border-emerald-500 text-gray-700 font-semibold flex items-center justify-center transition-colors"
+                    onClick={() => navigate('/host/register')}
+                    className="inline-flex items-center justify-center px-4 sm:px-5 py-2 sm:py-2.5 rounded-lg bg-white/12 backdrop-blur-sm border border-white/30 text-white text-xs sm:text-sm font-semibold hover:bg-white/20 transition shadow-sm active:scale-95"
+                    aria-label="Become a host"
                   >
-                    −
-                  </button>
-                  <span className="text-sm font-semibold text-gray-900">{guests} {guests === 1 ? 'guest' : 'guests'}</span>
-                  <button
-                    type="button"
-                    onClick={() => setGuests(guests + 1)}
-                    className="w-8 h-8 rounded-full border-2 border-gray-300 hover:border-emerald-500 text-gray-700 font-semibold flex items-center justify-center transition-colors"
-                  >
-                    +
+                    Become a host
                   </button>
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* Search Button */}
-            <button
-              type="submit"
-              className="w-full flex items-center justify-center bg-emerald-700 py-3 rounded-lg font-semibold hover:bg-emerald-800 transition transform hover:-translate-y-0.5 active:scale-95 text-sm mt-1"
-            >
-              <FaSearch className="mr-2" /> Search
-            </button>
-          </form>
+          {/* Right Column - Categories */}
+          <motion.div
+            ref={heroRef}
+            initial={{ opacity: 0, x: 50 }}
+            animate={heroInView ? { opacity: 1, x: 0 } : { opacity: 0, x: 50 }}
+            transition={{ duration: 0.8, delay: 0.6 }}
+            className="grid grid-cols-2 gap-3"
+          >
+            {[
+              { 
+                icon: FaUmbrellaBeach, 
+                title: "Beach", 
+                desc: "Coastal escapes", 
+                color: "text-blue-300",
+                onClick: () => navigate('/homestays?category=beach')
+              },
+              { 
+                icon: FaCity, 
+                title: "City", 
+                desc: "Urban stays", 
+                color: "text-purple-300",
+                onClick: () => navigate('/homestays?category=city')
+              },
+              { 
+                icon: FaMountain, 
+                title: "Countryside", 
+                desc: "Nature retreats", 
+                color: "text-green-300",
+                onClick: () => navigate('/homestays?category=countryside')
+              },
+              { 
+                icon: FaUtensils, 
+                title: "Services", 
+                desc: "Local experiences", 
+                color: "text-orange-300",
+                onClick: () => navigate('/services')
+              },
+            ].map((category, idx) => {
+              const IconComponent = category.icon;
+              return (
+                <motion.div
+                  key={category.title}
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={heroInView ? { opacity: 1, y: 0 } : { opacity: 0, y: 30 }}
+                  transition={{ duration: 0.6, delay: 0.1 + idx * 0.1 }}
+                  whileHover={{ scale: 1.05, y: -5 }}
+                  onClick={category.onClick}
+                  className="bg-white/5 backdrop-blur-sm border border-white/20 rounded-xl p-2 sm:p-3 hover:bg-white/15 transition-all cursor-pointer flex flex-col items-center justify-center shadow-lg min-h-[50px] sm:min-h-[60px]"
+                >
+                  <motion.div 
+                    className={`mb-3 flex justify-center ${category.color || "text-white"}`}
+                    whileHover={{ rotate: [0, -10, 10, 0], scale: 1.1 }}
+                    transition={{ duration: 0.3 }}
+                  >
+                    <IconComponent className="w-8 h-8 sm:w-9 sm:h-9" />
+                  </motion.div>
+                  <div className="text-white font-semibold text-sm sm:text-base mb-1">{category.title}</div>
+                  <div className="text-xs text-white/90 text-center leading-tight">{category.desc}</div>
+                </motion.div>
+              );
+            })}
+          </motion.div>
         </div>
       </div>
 

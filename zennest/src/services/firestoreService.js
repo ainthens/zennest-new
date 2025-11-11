@@ -142,6 +142,12 @@ export const createListing = async (listingData) => {
       throw new Error('Listing title is required');
     }
     
+    // Check if host can create more listings
+    const canCreate = await canCreateListing(listingData.hostId);
+    if (!canCreate.success || !canCreate.canCreate) {
+      throw new Error(canCreate.error || 'Cannot create listing. Please check your subscription.');
+    }
+    
     const listingsRef = collection(db, 'listings');
     
     // Prepare the document data - ensure all required fields are present
@@ -1529,7 +1535,7 @@ const createPendingTransfer = async (hostId, amount, method, accountDetails, boo
 };
 
 // Subscription management
-export const updateSubscriptionStatus = async (userId, status, paymentId = null) => {
+export const updateSubscriptionStatus = async (userId, status, paymentId = null, subscriptionPlan = null, startDate = null, endDate = null) => {
   try {
     const hostRef = doc(db, 'hosts', userId);
     const updateData = {
@@ -1541,14 +1547,158 @@ export const updateSubscriptionStatus = async (userId, status, paymentId = null)
       updateData.subscriptionPaymentId = paymentId;
     }
     
+    if (subscriptionPlan) {
+      updateData.subscriptionPlan = subscriptionPlan;
+    }
+    
     if (status === 'active') {
-      updateData.subscriptionStartDate = serverTimestamp();
+      updateData.subscriptionStartDate = startDate ? Timestamp.fromDate(startDate) : serverTimestamp();
+      if (endDate) {
+        updateData.subscriptionEndDate = Timestamp.fromDate(endDate);
+      }
     }
 
     await updateDoc(hostRef, updateData);
     return { success: true };
   } catch (error) {
     console.error('Error updating subscription status:', error);
+    throw error;
+  }
+};
+
+// Get subscription listing limit
+export const getSubscriptionListingLimit = (subscriptionPlan) => {
+  const limits = {
+    basic: 5,      // Updated to match new plan: 5 listings
+    pro: 20,       // Updated to match new plan: 20 listings
+    premium: -1    // -1 means unlimited
+  };
+  return limits[subscriptionPlan] || 0;
+};
+
+// Check if host can create more listings
+export const canCreateListing = async (hostId) => {
+  try {
+    // Get host profile
+    const hostResult = await getHostProfile(hostId);
+    if (!hostResult.success || !hostResult.data) {
+      return { success: false, canCreate: false, error: 'Host profile not found' };
+    }
+
+    const hostData = hostResult.data;
+    
+    // Check if subscription is active
+    if (hostData.subscriptionStatus !== 'active') {
+      return { 
+        success: true, 
+        canCreate: false, 
+        error: 'Subscription is not active. Please renew your subscription to create listings.',
+        reason: 'inactive_subscription'
+      };
+    }
+
+    // Check subscription end date
+    if (hostData.subscriptionEndDate) {
+      const endDate = hostData.subscriptionEndDate.toDate ? hostData.subscriptionEndDate.toDate() : new Date(hostData.subscriptionEndDate);
+      const now = new Date();
+      if (now > endDate) {
+        return { 
+          success: true, 
+          canCreate: false, 
+          error: 'Subscription has expired. Please renew your subscription to create listings.',
+          reason: 'expired_subscription'
+        };
+      }
+    }
+
+    // Get subscription plan
+    const subscriptionPlan = hostData.subscriptionPlan || 'basic';
+    const listingLimit = getSubscriptionListingLimit(subscriptionPlan);
+
+    // If unlimited, allow creation
+    if (listingLimit === -1) {
+      return { success: true, canCreate: true, remaining: -1 };
+    }
+
+    // Get current listing count
+    const listingsResult = await getHostListings(hostId);
+    const currentListings = listingsResult.success ? listingsResult.data.length : 0;
+
+    // Check if limit reached
+    if (currentListings >= listingLimit) {
+      return { 
+        success: true, 
+        canCreate: false, 
+        error: `You have reached your listing limit of ${listingLimit}. Please upgrade your subscription to create more listings.`,
+        reason: 'limit_reached',
+        current: currentListings,
+        limit: listingLimit
+      };
+    }
+
+    return { 
+      success: true, 
+      canCreate: true, 
+      remaining: listingLimit - currentListings,
+      current: currentListings,
+      limit: listingLimit
+    };
+  } catch (error) {
+    console.error('Error checking listing limit:', error);
+    return { success: false, canCreate: false, error: error.message };
+  }
+};
+
+// Cancel subscription
+export const cancelSubscription = async (userId) => {
+  try {
+    const hostRef = doc(db, 'hosts', userId);
+    const hostSnap = await getDoc(hostRef);
+    
+    if (!hostSnap.exists()) {
+      throw new Error('Host profile not found');
+    }
+
+    await updateDoc(hostRef, {
+      subscriptionStatus: 'cancelled',
+      subscriptionCancelledAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+
+    console.log('✅ Subscription cancelled for user:', userId);
+    return { success: true };
+  } catch (error) {
+    console.error('Error cancelling subscription:', error);
+    throw error;
+  }
+};
+
+// Delete host account
+export const deleteHostAccount = async (userId) => {
+  try {
+    // Get all host listings
+    const listingsResult = await getHostListings(userId);
+    const listings = listingsResult.success ? listingsResult.data : [];
+
+    // Delete all listings
+    const deleteListingPromises = listings.map(listing => deleteListing(listing.id));
+    await Promise.all(deleteListingPromises);
+
+    // Delete host profile
+    const hostRef = doc(db, 'hosts', userId);
+    await deleteDoc(hostRef);
+
+    // Delete user profile if exists
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+      await deleteDoc(userRef);
+    }
+
+    console.log('✅ Host account deleted for user:', userId);
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting host account:', error);
     throw error;
   }
 };

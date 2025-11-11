@@ -167,7 +167,7 @@ const Footer = () => {
                 </div>
                 <div>
                   <div className="text-xs text-emerald-300">Call us</div>
-                  <div className="text-emerald-100 font-medium">+63 123 456 789</div>
+                  <div className="text-emerald-100 font-medium">+63 961 2469 245</div>
                 </div>
               </a>
               <a 
@@ -179,7 +179,7 @@ const Footer = () => {
                 </div>
                 <div>
                   <div className="text-xs text-emerald-300">Email us</div>
-                  <div className="text-emerald-100 font-medium break-all">info@zennest.com</div>
+                  <div className="text-emerald-100 font-medium break-all">zennesrcorporation@gmail.com</div>
                 </div>
               </a>
             </div>

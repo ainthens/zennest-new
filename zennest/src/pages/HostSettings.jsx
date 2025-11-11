@@ -1,11 +1,12 @@
 // src/pages/HostSettings.jsx
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { getHostProfile, updateHostProfile, getHostCoupons, createCoupon } from '../services/firestoreService';
-import { getHostBookings } from '../services/firestoreService';
+import { getHostProfile, updateHostProfile, getHostCoupons, createCoupon, getHostBookings, cancelSubscription, deleteHostAccount, getSubscriptionListingLimit, canCreateListing, getHostListings } from '../services/firestoreService';
 import { uploadImageToCloudinary } from '../config/cloudinary';
 import useAuth from '../hooks/useAuth';
-import { EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
+import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, deleteUser } from 'firebase/auth';
+import { auth } from '../config/firebase';
+import { useNavigate } from 'react-router-dom';
 import {
   FaUser,
   FaCalendar,
@@ -21,11 +22,16 @@ import {
   FaLock,
   FaEye,
   FaEyeSlash,
-  FaExclamationCircle
+  FaExclamationCircle,
+  FaCreditCard,
+  FaCrown,
+  FaBan,
+  FaUserTimes
 } from 'react-icons/fa';
 
 const HostSettings = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('profile');
   const [hostProfile, setHostProfile] = useState(null);
   const [bookings, setBookings] = useState([]);
@@ -36,6 +42,10 @@ const HostSettings = () => {
   const [showCouponForm, setShowCouponForm] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [cancellingSubscription, setCancellingSubscription] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [listingInfo, setListingInfo] = useState(null);
   
   const [profileData, setProfileData] = useState({
     firstName: '',
@@ -145,6 +155,12 @@ const HostSettings = () => {
         ? couponsResult.value 
         : { success: false, data: [] };
       setCoupons(coupons.data || []);
+
+      // Get listing info for subscription tab
+      if (profile && profile.success && profile.data) {
+        const listingCheck = await canCreateListing(user.uid);
+        setListingInfo(listingCheck);
+      }
 
       console.log('✅ Settings data loaded');
     } catch (error) {
@@ -362,8 +378,67 @@ const HostSettings = () => {
     }
   };
 
+  const handleCancelSubscription = async () => {
+    if (!window.confirm('Are you sure you want to cancel your subscription? You will lose access to all premium features and your listings will be unpublished.')) {
+      return;
+    }
+
+    setCancellingSubscription(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      await cancelSubscription(user.uid);
+      setSuccess('Subscription cancelled successfully. Your subscription will remain active until the end of the current billing period.');
+      await fetchData();
+      setTimeout(() => setSuccess(''), 5000);
+    } catch (error) {
+      console.error('Error cancelling subscription:', error);
+      setError('Failed to cancel subscription. Please try again or contact support.');
+    } finally {
+      setCancellingSubscription(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!showDeleteConfirm) {
+      setShowDeleteConfirm(true);
+      return;
+    }
+
+    setDeletingAccount(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      // Delete host account (this will delete all listings and profile)
+      await deleteHostAccount(user.uid);
+      
+      // Delete Firebase auth account
+      if (auth.currentUser) {
+        await deleteUser(auth.currentUser);
+      }
+      
+      // Redirect to home page
+      navigate('/');
+      window.location.reload();
+    } catch (error) {
+      console.error('Error deleting account:', error);
+      
+      if (error.code === 'auth/requires-recent-login') {
+        setError('For security reasons, please log out and log back in before deleting your account.');
+      } else {
+        setError('Failed to delete account. Please try again or contact support.');
+      }
+      setShowDeleteConfirm(false);
+    } finally {
+      setDeletingAccount(false);
+    }
+  };
+
   const tabs = [
     { id: 'profile', label: 'Profile', icon: FaUser },
+    { id: 'subscription', label: 'Subscription', icon: FaCreditCard },
     { id: 'bookings', label: 'Bookings', icon: FaCalendar },
     { id: 'coupons', label: 'Coupons', icon: FaTicketAlt },
     { id: 'security', label: 'Security', icon: FaLock }
@@ -715,6 +790,220 @@ const HostSettings = () => {
                     <p id="address-helper" className="text-xs text-gray-600 mt-0.5">Your full mailing address</p>
                   </div>
                 </fieldset>
+              </div>
+            </div>
+          )}
+
+          {/* Subscription Tab - New */}
+          {activeTab === 'subscription' && (
+            <div className="space-y-6">
+              {/* Success/Error Messages */}
+              {success && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  role="alert"
+                  aria-live="polite"
+                  className="bg-emerald-50 border-l-4 border-emerald-600 text-emerald-900 px-4 py-3 rounded-lg flex items-start gap-2 shadow-md"
+                >
+                  <FaCheckCircle className="text-emerald-600 text-base mt-0.5 flex-shrink-0" aria-hidden="true" />
+                  <span className="text-sm font-semibold">{success}</span>
+                </motion.div>
+              )}
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  role="alert"
+                  aria-live="assertive"
+                  className="bg-red-50 border-l-4 border-red-600 text-red-900 px-4 py-3 rounded-lg flex items-start gap-2 shadow-md"
+                >
+                  <FaExclamationCircle className="text-red-600 text-base mt-0.5 flex-shrink-0" aria-hidden="true" />
+                  <p className="text-sm font-semibold">{error}</p>
+                </motion.div>
+              )}
+
+              {/* Section Header */}
+              <div className="space-y-1 border-b border-gray-200 pb-3">
+                <h2 className="text-xl font-bold text-gray-900">Subscription & Membership</h2>
+                <p className="text-sm text-gray-600">Manage your subscription plan and membership details</p>
+              </div>
+
+              {/* Subscription Details Card */}
+              {hostProfile && (
+                <div className="bg-gradient-to-br from-emerald-50 via-white to-emerald-50/30 rounded-xl p-6 border-2 border-emerald-200 shadow-lg">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                        hostProfile.subscriptionPlan === 'premium' 
+                          ? 'bg-gradient-to-br from-purple-500 to-purple-600' 
+                          : hostProfile.subscriptionPlan === 'pro'
+                          ? 'bg-gradient-to-br from-blue-500 to-blue-600'
+                          : 'bg-gradient-to-br from-gray-500 to-gray-600'
+                      }`}>
+                        <FaCrown className="text-white text-lg" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-gray-900">
+                          {hostProfile.subscriptionPlan === 'premium' ? 'Premium Plan' :
+                           hostProfile.subscriptionPlan === 'pro' ? 'Pro Plan' :
+                           hostProfile.subscriptionPlan === 'basic' ? 'Basic Plan' : 'No Plan'}
+                        </h3>
+                        <p className="text-xs text-gray-600">
+                          {hostProfile.subscriptionPlan === 'premium' ? 'Unlimited listings' :
+                           hostProfile.subscriptionPlan === 'pro' ? 'Up to 20 listings' :
+                           hostProfile.subscriptionPlan === 'basic' ? 'Up to 5 listings' : 'No active plan'}
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wide ${
+                      hostProfile.subscriptionStatus === 'active'
+                        ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-300'
+                        : hostProfile.subscriptionStatus === 'cancelled'
+                        ? 'bg-yellow-100 text-yellow-800 border-2 border-yellow-300'
+                        : 'bg-gray-100 text-gray-800 border-2 border-gray-300'
+                    }`}>
+                      {hostProfile.subscriptionStatus || 'inactive'}
+                    </span>
+                  </div>
+
+                  {/* Subscription Dates */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    {hostProfile.subscriptionStartDate && (
+                      <div className="bg-white rounded-lg p-4 border border-gray-200">
+                        <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Start Date</p>
+                        <p className="text-sm font-bold text-gray-900">
+                          {hostProfile.subscriptionStartDate?.toDate 
+                            ? hostProfile.subscriptionStartDate.toDate().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                            : new Date(hostProfile.subscriptionStartDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                          }
+                        </p>
+                      </div>
+                    )}
+                    {hostProfile.subscriptionEndDate && (
+                      <div className="bg-white rounded-lg p-4 border border-gray-200">
+                        <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">End Date</p>
+                        <p className="text-sm font-bold text-gray-900">
+                          {hostProfile.subscriptionEndDate?.toDate 
+                            ? hostProfile.subscriptionEndDate.toDate().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                            : new Date(hostProfile.subscriptionEndDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                          }
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Listing Usage */}
+                  {listingInfo && (
+                    <div className="bg-white rounded-lg p-4 border border-gray-200 mb-4">
+                      <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Listing Usage</p>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-gray-700">
+                          {listingInfo.current !== undefined ? `${listingInfo.current} of ${listingInfo.limit === -1 ? '∞' : listingInfo.limit} listings used` : 'Loading...'}
+                        </span>
+                        {listingInfo.limit !== -1 && listingInfo.current !== undefined && (
+                          <div className="flex-1 mx-4 bg-gray-200 rounded-full h-2">
+                            <div 
+                              className={`h-2 rounded-full ${
+                                (listingInfo.current / listingInfo.limit) >= 1 
+                                  ? 'bg-red-500' 
+                                  : (listingInfo.current / listingInfo.limit) >= 0.8 
+                                  ? 'bg-yellow-500' 
+                                  : 'bg-emerald-500'
+                              }`}
+                              style={{ width: `${Math.min((listingInfo.current / listingInfo.limit) * 100, 100)}%` }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                      {listingInfo.remaining !== undefined && listingInfo.remaining >= 0 && (
+                        <p className="text-xs text-gray-600 mt-2">
+                          {listingInfo.remaining} listing{listingInfo.remaining !== 1 ? 's' : ''} remaining
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-gray-300">
+                    {hostProfile.subscriptionStatus === 'active' && (
+                      <button
+                        onClick={handleCancelSubscription}
+                        disabled={cancellingSubscription}
+                        aria-label="Cancel subscription"
+                        className="flex items-center justify-center gap-2 px-6 py-3 bg-yellow-500 text-white font-bold text-sm rounded-lg hover:bg-yellow-600 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95 disabled:transform-none min-h-[44px]"
+                      >
+                        <FaBan className="text-base" aria-hidden="true" />
+                        <span>{cancellingSubscription ? 'Cancelling...' : 'Cancel Subscription'}</span>
+                      </button>
+                    )}
+                    {hostProfile.subscriptionStatus !== 'active' && (
+                      <button
+                        onClick={() => navigate('/host/register', { state: { step: 2 } })}
+                        aria-label="Upgrade subscription"
+                        className="flex items-center justify-center gap-2 px-6 py-3 bg-emerald-600 text-white font-bold text-sm rounded-lg hover:bg-emerald-700 transition-all shadow-md hover:shadow-lg transform hover:scale-105 active:scale-95 min-h-[44px]"
+                      >
+                        <FaCreditCard className="text-base" aria-hidden="true" />
+                        <span>Upgrade Subscription</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Account Deletion Section */}
+              <div className="bg-red-50 rounded-xl p-6 border-2 border-red-200 shadow-md">
+                <div className="mb-4">
+                  <h3 className="text-lg font-bold text-red-900 mb-1 flex items-center gap-2">
+                    <FaUserTimes className="text-red-600" aria-hidden="true" />
+                    <span>Delete Account</span>
+                  </h3>
+                  <p className="text-sm text-red-800 leading-relaxed">
+                    Permanently delete your account and all associated data. This action cannot be undone.
+                  </p>
+                </div>
+
+                {showDeleteConfirm ? (
+                  <div className="space-y-3">
+                    <p className="text-sm font-semibold text-red-900">
+                      Are you absolutely sure? This will:
+                    </p>
+                    <ul className="list-disc list-inside text-sm text-red-800 space-y-1 ml-2">
+                      <li>Delete all your listings</li>
+                      <li>Cancel your subscription</li>
+                      <li>Remove all your account data</li>
+                      <li>Delete your profile permanently</li>
+                    </ul>
+                    <div className="flex flex-col sm:flex-row gap-3 pt-3">
+                      <button
+                        onClick={handleDeleteAccount}
+                        disabled={deletingAccount}
+                        aria-label="Confirm account deletion"
+                        className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-red-600 text-white font-bold text-sm rounded-lg hover:bg-red-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95 disabled:transform-none min-h-[44px]"
+                      >
+                        <FaUserTimes className="text-base" aria-hidden="true" />
+                        <span>{deletingAccount ? 'Deleting Account...' : 'Yes, Delete My Account'}</span>
+                      </button>
+                      <button
+                        onClick={() => setShowDeleteConfirm(false)}
+                        disabled={deletingAccount}
+                        aria-label="Cancel account deletion"
+                        className="flex-1 sm:flex-initial px-6 py-3 bg-gray-300 text-gray-900 font-bold text-sm rounded-lg hover:bg-gray-400 transition-all shadow-sm hover:shadow-md min-h-[44px] transform hover:scale-105 active:scale-95"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleDeleteAccount}
+                    aria-label="Delete account"
+                    className="flex items-center justify-center gap-2 px-6 py-3 bg-red-600 text-white font-bold text-sm rounded-lg hover:bg-red-700 transition-all shadow-md hover:shadow-lg transform hover:scale-105 active:scale-95 min-h-[44px]"
+                  >
+                    <FaUserTimes className="text-base" aria-hidden="true" />
+                    <span>Delete Account</span>
+                  </button>
+                )}
               </div>
             </div>
           )}

@@ -1,5 +1,5 @@
 // HomeStays.jsx
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getPublishedListings, getUserFavorites, toggleFavorite } from "../services/firestoreService";
 import { collection, query, where, getDocs } from "firebase/firestore";
@@ -10,6 +10,9 @@ import Hero from "../components/Hero";
 import { motion } from "framer-motion";
 import { useInView } from "react-intersection-observer";
 import useAuth from "../hooks/useAuth";
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
+import { FaSearch, FaMapMarkerAlt, FaCalendarAlt, FaUsers } from "react-icons/fa";
 
 // Animation variants
 const fadeInUp = {
@@ -111,12 +114,18 @@ const HomeStays = () => {
   const [recommendations, setRecommendations] = useState([]);
   const [previousBookings, setPreviousBookings] = useState([]);
   const [filters, setFilters] = useState({ location: "", guests: 0, locationSelect: "" });
+  const [searchInputs, setSearchInputs] = useState({ location: "", guests: 0 });
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [priceRange, setPriceRange] = useState("all");
   const [favorites, setFavorites] = useState(() => new Set());
-  const [sortBy, setSortBy] = useState("featured");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 6;
+  const [checkIn, setCheckIn] = useState(null);
+  const [checkOut, setCheckOut] = useState(null);
+  const [searchCheckIn, setSearchCheckIn] = useState(null);
+  const [searchCheckOut, setSearchCheckOut] = useState(null);
+  const [showGuestsDropdown, setShowGuestsDropdown] = useState(false);
+  const guestsDropdownRef = useRef(null);
 
   // HomeStay categories
   const homeStayCategories = ['apartment', 'house', 'villa', 'condo', 'studio', 'other'];
@@ -136,14 +145,6 @@ const HomeStays = () => {
     { value: 'high', label: 'Over ₱3,000/night' }
   ];
 
-  // Sort options
-  const sortOptions = [
-    { value: 'featured', label: 'Featured' },
-    { value: 'price-low', label: 'Price: Low to High' },
-    { value: 'price-high', label: 'Price: High to Low' },
-    { value: 'rating', label: 'Highest Rated' },
-    { value: 'guests', label: 'Most Guests' }
-  ];
 
   // Handle URL search params from Hero search
   useEffect(() => {
@@ -153,13 +154,40 @@ const HomeStays = () => {
     const guestsParam = searchParams.get('guests');
 
     if (locationParam || checkInParam || checkOutParam || guestsParam) {
+      const location = locationParam || '';
+      const guests = guestsParam ? parseInt(guestsParam) : 0;
       setFilters(prev => ({
         ...prev,
-        location: locationParam || '',
-        guests: guestsParam ? parseInt(guestsParam) : 0
+        location: location,
+        guests: guests
       }));
+      setSearchInputs({
+        location: location,
+        guests: guests
+      });
+      if (checkInParam) {
+        const checkInDate = new Date(checkInParam);
+        setCheckIn(checkInDate);
+        setSearchCheckIn(checkInDate);
+      }
+      if (checkOutParam) {
+        const checkOutDate = new Date(checkOutParam);
+        setCheckOut(checkOutDate);
+        setSearchCheckOut(checkOutDate);
+      }
     }
   }, [searchParams]);
+
+  // Close guests dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (guestsDropdownRef.current && !guestsDropdownRef.current.contains(event.target)) {
+        setShowGuestsDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Fetch previous bookings for recommendations
   useEffect(() => {
@@ -361,26 +389,9 @@ const HomeStays = () => {
       return true;
     });
 
-    // Apply sorting
-    switch (sortBy) {
-      case "price-low":
-        results.sort((a, b) => a.pricePerNight - b.pricePerNight);
-        break;
-      case "price-high":
-        results.sort((a, b) => b.pricePerNight - a.pricePerNight);
-        break;
-      case "rating":
-        results.sort((a, b) => b.rating - a.rating);
-        break;
-      case "guests":
-        results.sort((a, b) => b.guests - a.guests);
-        break;
-      default: // "featured" - default order
-        break;
-    }
-
+    // Default order (featured)
     return results;
-  }, [listings, filters, selectedCategory, priceRange, sortBy]);
+  }, [listings, filters, selectedCategory, priceRange]);
 
   // Pagination calculations
   const totalPages = Math.ceil(filtered.length / itemsPerPage);
@@ -388,10 +399,10 @@ const HomeStays = () => {
   const endIndex = startIndex + itemsPerPage;
   const paginatedListings = filtered.slice(startIndex, endIndex);
 
-  // Reset to page 1 when filters or sort changes
+  // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [filters, selectedCategory, priceRange, sortBy]);
+  }, [filters, selectedCategory, priceRange]);
 
   const handleToggleFavorite = async (id) => {
     if (!user?.uid) {
@@ -425,14 +436,94 @@ const HomeStays = () => {
 
   const clearAllFilters = () => {
     setFilters({ location: "", guests: 0, locationSelect: "" });
+    setSearchInputs({ location: "", guests: 0 });
     setSelectedCategory("all");
     setPriceRange("all");
-    setSortBy("featured");
+    setCheckIn(null);
+    setCheckOut(null);
+    setSearchCheckIn(null);
+    setSearchCheckOut(null);
   };
+
+  const handleSearch = (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
+    // Update filters with search input values when search button is clicked
+    setFilters(prev => ({
+      ...prev,
+      location: searchInputs.location,
+      guests: searchInputs.guests
+    }));
+    setCheckIn(searchCheckIn);
+    setCheckOut(searchCheckOut);
+    setCurrentPage(1);
+    
+    // Scroll to homestays list after a short delay to ensure DOM is updated
+    setTimeout(() => {
+      // Try to find the homestays list section first
+      const homestaysSection = document.getElementById('homestays-list');
+      if (homestaysSection) {
+        const headerOffset = 100;
+        const elementPosition = homestaysSection.getBoundingClientRect().top;
+        const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
+        
+        window.scrollTo({
+          top: Math.max(0, offsetPosition),
+          behavior: 'smooth'
+        });
+        return;
+      }
+      
+      // Fallback: scroll to filters section
+      const filtersSection = document.getElementById('filters-section');
+      if (filtersSection) {
+        const headerOffset = 100;
+        const elementPosition = filtersSection.getBoundingClientRect().top;
+        const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
+        
+        window.scrollTo({
+          top: Math.max(0, offsetPosition),
+          behavior: 'smooth'
+        });
+        return;
+      }
+      
+      // Last resort: scroll to recommendations section
+      const recommendationsSection = document.querySelector('[class*="Recommendations"]');
+      if (recommendationsSection) {
+        const headerOffset = 100;
+        const elementPosition = recommendationsSection.getBoundingClientRect().top;
+        const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
+        
+        window.scrollTo({
+          top: Math.max(0, offsetPosition),
+          behavior: 'smooth'
+        });
+      }
+    }, 200);
+  };
+
+  const CustomDateInput = React.forwardRef(({ value, onClick, placeholder }, ref) => (
+    <div className="relative w-full">
+      <input
+        onClick={onClick}
+        ref={ref}
+        value={value}
+        placeholder={placeholder}
+        readOnly
+        className="w-full pl-10 pr-4 py-3 text-sm focus:outline-none cursor-pointer hover:bg-gray-50 transition-colors border-0"
+      />
+      <FaCalendarAlt className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm pointer-events-none" />
+    </div>
+  ));
 
   return (
     <main id="homestays" className="min-h-screen bg-slate-100">
       <Hero />
+      
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 pt-6 sm:pt-8 md:pt-12">
         {/* Header Section */}
         <div className="text-center mb-8 sm:mb-12">
@@ -443,9 +534,152 @@ const HomeStays = () => {
             <span className="text-xs sm:text-sm font-medium text-emerald-700">Premium Stays</span>
           </div>
           <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-emerald-900 mb-3 sm:mb-4 px-2">Discover Your Perfect Home Stay</h1>
-          <p className="text-sm sm:text-base md:text-lg text-gray-600 max-w-2xl mx-auto px-4">
+          <p className="text-sm sm:text-base md:text-lg text-gray-600 max-w-2xl mx-auto px-4 mb-8">
             Curated hand-picked accommodations that feel like home. Filter by location, guest count and save your favorites.
           </p>
+
+          {/* Airbnb-style Search Bar */}
+          <AnimatedSection className="mb-8">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+              className="bg-white rounded-2xl sm:rounded-full shadow-xl border border-gray-200 p-2 sm:p-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-0 sm:gap-0 max-w-5xl mx-auto overflow-hidden"
+            >
+              {/* Where */}
+              <div className="flex-1 min-w-0 border-b sm:border-b-0 border-gray-200">
+                <label className="block text-xs font-semibold text-gray-900 mb-1 px-4 pt-2">Where</label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Search destinations"
+                    value={searchInputs.location}
+                    onChange={(e) => setSearchInputs({ ...searchInputs, location: e.target.value })}
+                    className="w-full pl-10 pr-4 py-3 text-sm focus:outline-none focus:bg-gray-50 transition-colors border-0 rounded-none"
+                  />
+                  <FaMapMarkerAlt className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm pointer-events-none" />
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div className="hidden sm:block w-px h-12 bg-gray-200 mx-1"></div>
+
+              {/* Check-in */}
+              <div className="flex-1 min-w-0 border-b sm:border-b-0 border-gray-200">
+                <label className="block text-xs font-semibold text-gray-900 mb-1 px-4 pt-2">Check-in</label>
+                <DatePicker
+                  selected={searchCheckIn}
+                  onChange={(date) => setSearchCheckIn(date)}
+                  selectsStart
+                  startDate={searchCheckIn}
+                  endDate={searchCheckOut}
+                  minDate={new Date()}
+                  dateFormat="MMM dd"
+                  placeholderText="Add dates"
+                  customInput={<CustomDateInput />}
+                  wrapperClassName="w-full"
+                  popperClassName="z-50"
+                  popperPlacement="bottom-start"
+                />
+              </div>
+
+              {/* Divider */}
+              <div className="hidden sm:block w-px h-12 bg-gray-200 mx-1"></div>
+
+              {/* Check-out */}
+              <div className="flex-1 min-w-0 border-b sm:border-b-0 border-gray-200">
+                <label className="block text-xs font-semibold text-gray-900 mb-1 px-4 pt-2">Check-out</label>
+                <DatePicker
+                  selected={searchCheckOut}
+                  onChange={(date) => setSearchCheckOut(date)}
+                  selectsEnd
+                  startDate={searchCheckIn}
+                  endDate={searchCheckOut}
+                  minDate={searchCheckIn || new Date()}
+                  dateFormat="MMM dd"
+                  placeholderText="Add dates"
+                  customInput={<CustomDateInput />}
+                  wrapperClassName="w-full"
+                  popperClassName="z-50"
+                  popperPlacement="bottom-start"
+                />
+              </div>
+
+              {/* Divider */}
+              <div className="hidden sm:block w-px h-12 bg-gray-200 mx-1"></div>
+
+              {/* Who */}
+              <div className="flex-1 min-w-0 relative" ref={guestsDropdownRef}>
+                <label className="block text-xs font-semibold text-gray-900 mb-1 px-4 pt-2">Who</label>
+                <button
+                  type="button"
+                  onClick={() => setShowGuestsDropdown(!showGuestsDropdown)}
+                  className="w-full pl-10 pr-4 py-3 text-sm text-left focus:outline-none hover:bg-gray-50 transition-colors flex items-center justify-between border-0 rounded-none"
+                >
+                  <div className="flex items-center gap-2">
+                    <FaUsers className="absolute left-3 text-gray-400 text-sm" />
+                    <span className={searchInputs.guests > 0 ? "text-gray-900" : "text-gray-400"}>
+                      {searchInputs.guests > 0 ? `${searchInputs.guests} ${searchInputs.guests === 1 ? 'guest' : 'guests'}` : 'Add guests'}
+                    </span>
+                  </div>
+                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                
+                {/* Guests Dropdown */}
+                {showGuestsDropdown && (
+                  <div className="absolute top-full left-0 right-0 sm:left-auto sm:right-0 sm:w-80 mt-2 bg-white rounded-2xl shadow-xl border border-gray-200 p-6 z-50">
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold text-gray-900">Adults</div>
+                          <div className="text-sm text-gray-500">Ages 13+</div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <button
+                            type="button"
+                            onClick={() => setSearchInputs({ ...searchInputs, guests: Math.max(0, searchInputs.guests - 1) })}
+                            disabled={searchInputs.guests <= 0}
+                            className="w-8 h-8 rounded-full border-2 border-gray-300 flex items-center justify-center hover:border-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <span className="text-gray-600">−</span>
+                          </button>
+                          <span className="w-8 text-center font-semibold">{searchInputs.guests}</span>
+                          <button
+                            type="button"
+                            onClick={() => setSearchInputs({ ...searchInputs, guests: searchInputs.guests + 1 })}
+                            className="w-8 h-8 rounded-full border-2 border-gray-300 flex items-center justify-center hover:border-gray-400 transition-colors"
+                          >
+                            <span className="text-gray-600">+</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowGuestsDropdown(false)}
+                      className="mt-4 w-full text-left text-sm font-semibold text-emerald-600 hover:text-emerald-700"
+                    >
+                      Done
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Search Button */}
+              <div className="flex items-end pb-0 sm:pb-0 sm:ml-2 p-2 pt-3 sm:pt-2">
+                <button
+                  type="button"
+                  onClick={handleSearch}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-full px-6 py-3 sm:px-6 sm:py-3 transition-all duration-200 flex items-center justify-center gap-2 shadow-md hover:shadow-lg transform hover:scale-105 active:scale-95 w-full sm:w-auto font-semibold text-sm"
+                >
+                  <FaSearch className="text-sm" />
+                  <span>Search</span>
+                </button>
+              </div>
+            </motion.div>
+          </AnimatedSection>
         </div>
 
         {/* Recommendations Section */}
@@ -479,31 +713,59 @@ const HomeStays = () => {
           </AnimatedSection>
         )}
 
-        <AnimatedSection className="mb-6 sm:mb-8">
-          <Filters
-            filters={filters}
-            setFilters={setFilters}
-            selectedCategory={selectedCategory}
-            setSelectedCategory={setSelectedCategory}
-            priceRange={priceRange}
-            setPriceRange={setPriceRange}
-            sortBy={sortBy}
-            setSortBy={setSortBy}
-            categories={categories.length > 0 ? categories : homeStayCategories}
-            categoryLabels={categoryLabels}
-            locations={locations}
-            priceRangeOptions={priceRangeOptions}
-            sortOptions={sortOptions}
-            filteredCount={filtered.length}
-            totalCount={listings.length}
-            searchPlaceholder="Search homestays..."
-            itemLabel="homestays"
-            hideSearch={true}
-          />
+        {/* Filters Section - Category and Price Range Only */}
+        <AnimatedSection id="filters-section" className="mb-6 sm:mb-8">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Category Filter */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
+                >
+                  <option value="all">All Categories</option>
+                  {(categories.length > 0 ? categories : homeStayCategories).map(cat => (
+                    <option key={cat} value={cat}>{categoryLabels[cat] || cat}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Price Range Filter */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Price Range</label>
+                <select
+                  value={priceRange}
+                  onChange={(e) => setPriceRange(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
+                >
+                  {priceRangeOptions.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Active Filters Count */}
+            {(filters.location || filters.guests > 0 || selectedCategory !== 'all' || priceRange !== 'all') && (
+              <div className="mt-4 flex items-center justify-between pt-4 border-t border-gray-200">
+                <div className="text-sm text-gray-600">
+                  Showing {filtered.length} of {listings.length} homestays
+                </div>
+                <button
+                  onClick={clearAllFilters}
+                  className="text-sm text-emerald-600 hover:text-emerald-700 font-medium"
+                >
+                  Clear Filters
+                </button>
+              </div>
+            )}
+          </div>
         </AnimatedSection>
 
         {/* Home Stays Grid */}
-        <AnimatedGrid className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+        <AnimatedGrid id="homestays-list" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {loading ? (
             <div className="col-span-full text-center py-12">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600 mx-auto mb-4"></div>

@@ -172,7 +172,7 @@ const HostEmailVerifyPage = () => {
         const finalFirstName = typeof firstName !== 'undefined' && firstName !== null ? firstName : (profileData.firstName || '');
         const finalLastName = typeof lastName !== 'undefined' && lastName !== null ? lastName : (profileData.lastName || '');
         const finalPhone = typeof phone !== 'undefined' && phone !== null ? phone : (profileData.phone || '');
-        const finalPlan = typeof subscriptionPlan !== 'undefined' && subscriptionPlan !== null ? subscriptionPlan : (profileData.subscriptionPlan || 'monthly');
+        const finalPlan = typeof subscriptionPlan !== 'undefined' && subscriptionPlan !== null ? subscriptionPlan : (profileData.subscriptionPlan || 'basic');
         await updateUserProfile(user.uid, { role: 'host' });
       await createHostProfile(user.uid, {
         firstName: finalFirstName,
@@ -186,7 +186,18 @@ const HostEmailVerifyPage = () => {
       });
       setStatus('verified');
       setTimeout(() => {
-        navigate('/host/register', { state: { step: 2, email: emailToVerify, subscriptionPlan: finalPlan, fromVerification: true }, replace: true });
+        navigate('/host/register', { 
+          state: { 
+            step: 2, 
+            email: emailToVerify, 
+            firstName: finalFirstName,
+            lastName: finalLastName,
+            phone: finalPhone,
+            subscriptionPlan: finalPlan, 
+            fromVerification: true 
+          }, 
+          replace: true 
+        });
       }, 2000);
         return;
       }
@@ -239,7 +250,18 @@ const HostEmailVerifyPage = () => {
       }
       setStatus('verified');
       setTimeout(() => {
-        navigate('/host/register', { state: { step: 2, email, subscriptionPlan, fromVerification: true }, replace: true });
+        navigate('/host/register', { 
+          state: { 
+            step: 2, 
+            email, 
+            firstName,
+            lastName,
+            phone,
+            subscriptionPlan, 
+            fromVerification: true 
+          }, 
+          replace: true 
+        });
       }, 2000);
     } catch (err) {
       console.error('Host registration error:', err);

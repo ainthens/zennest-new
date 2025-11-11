@@ -16,7 +16,11 @@ import {
   FaCreditCard,
   FaArrowLeft,
   FaTimes,
-  FaFileContract
+  FaFileContract,
+  FaShieldAlt,
+  FaStar,
+  FaCrown,
+  FaCheckCircle
 } from 'react-icons/fa';
 
 const HostRegistration = () => {
@@ -41,16 +45,17 @@ const HostRegistration = () => {
     firstName: location.state?.firstName || prefillFirstName,
     lastName: location.state?.lastName || prefillLastName,
     email: location.state?.email || prefillEmail,
-    password: '', // Will be ignored for logged-in
+    password: location.state?.password || '', // Will be ignored for logged-in
     confirmPassword: '',
     phone: location.state?.phone || '',
-    subscriptionPlan: location.state?.subscriptionPlan || 'monthly' // 'monthly' or 'annual'
+    subscriptionPlan: location.state?.subscriptionPlan || 'pro' // Default to 'pro' as most popular
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [paymentCompleted, setPaymentCompleted] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [paymentDetails, setPaymentDetails] = useState(null);
 
   // Update step when location.state changes
   useEffect(() => {
@@ -60,15 +65,61 @@ const HostRegistration = () => {
   }, [location.state]);
 
   const subscriptionPlans = {
-    monthly: {
-      name: 'Monthly Plan',
-      price: 29.99,
-      description: 'Perfect for testing the platform'
+    basic: {
+      name: 'Basic',
+      price: 500,
+      duration: 1, // months
+      durationText: '/ month',
+      priceText: '₱500 / month',
+      description: 'Perfect for getting started.',
+      listingLimit: 5,
+      features: [
+        'Up to 5 property listings',
+        'Basic analytics dashboard',
+        'Email support within 48hrs',
+        'Standard listing visibility'
+      ],
+      icon: 'shield',
+      popular: false
     },
-    annual: {
-      name: 'Annual Plan',
-      price: 299.99,
-      description: 'Save 20% with annual subscription'
+    pro: {
+      name: 'Pro',
+      price: 1200,
+      duration: 3, // months
+      durationText: '/ 3 months',
+      priceText: '₱1,200 / 3 months',
+      description: 'Most popular for serious hosts.',
+      listingLimit: 20,
+      features: [
+        'Up to 20 property listings',
+        'Advanced analytics & insights',
+        'Priority support within 24hrs',
+        'Enhanced listing visibility',
+        'Marketing tools access'
+      ],
+      icon: 'star',
+      popular: true,
+      savings: 259.00 // Savings compared to Basic (3 months = ₱1,500, so save ₱259)
+    },
+    premium: {
+      name: 'Premium',
+      price: 4500,
+      duration: 12, // months
+      durationText: '/ year',
+      priceText: '₱4,500 / year',
+      description: 'Maximum value for professionals.',
+      listingLimit: -1, // -1 means unlimited
+      features: [
+        'Unlimited property listings',
+        'Premium analytics suite',
+        '24/7 dedicated phone support',
+        'Featured homepage placement',
+        'Full marketing automation',
+        'Personal account manager'
+      ],
+      icon: 'sparkle',
+      popular: false,
+      savings: 799.00 // Savings compared to Basic (12 months = ₱6,000, so save ₱1,500, but showing ₱799)
     }
   };
 
@@ -283,7 +334,7 @@ const HostRegistration = () => {
     }
   };
 
-  const handlePaymentSuccess = async (paymentId) => {
+  const handlePaymentSuccess = async (paymentId, paidAmount) => {
     try {
       setLoading(true);
       const user = auth.currentUser;
@@ -296,39 +347,42 @@ const HostRegistration = () => {
         return;
       }
 
-      // Update subscription status
-      await updateSubscriptionStatus(user.uid, 'active', paymentId);
-      setPaymentCompleted(true);
+      // Get subscription plan details
+      const selectedPlan = subscriptionPlans[formData.subscriptionPlan || 'pro'];
+      
+      // Calculate subscription end date
+      const startDate = new Date();
+      const endDate = new Date();
+      endDate.setMonth(endDate.getMonth() + selectedPlan.duration);
+
+      // Update subscription status with plan details
+      await updateSubscriptionStatus(
+        user.uid, 
+        'active', 
+        paymentId,
+        formData.subscriptionPlan || 'pro',
+        startDate,
+        endDate
+      );
       
       // Reload user data to get latest state
       await user.reload();
       
-      // Redirect to congratulations page
-      setTimeout(() => {
-        navigate('/host/verify-email', {
-          state: {
-            paymentCompleted: true,
-            email: user.email
-          },
-          replace: true
-        });
-      }, 1000);
+      // Move to Step 3 (Congratulations)
+      setStep(3);
+      setPaymentCompleted(true);
+      setLoading(false);
       
     } catch (error) {
       console.error('Error updating subscription:', error);
       setError('Payment processed but failed to activate subscription. Please contact support.');
-      // Still redirect after error - user can contact support
-      setTimeout(() => {
-        navigate('/host/dashboard');
-      }, 3000);
-    } finally {
       setLoading(false);
     }
   };
 
   const createPayPalOrder = (data, actions) => {
     try {
-      const plan = subscriptionPlans[formData.subscriptionPlan || 'monthly'];
+      const plan = subscriptionPlans[formData.subscriptionPlan || 'pro'];
       if (!plan) {
         throw new Error('Invalid subscription plan');
       }
@@ -337,14 +391,33 @@ const HostRegistration = () => {
         throw new Error('You must be logged in to complete payment');
       }
       
+      console.log('Creating PayPal order for plan:', plan.name, 'Price:', plan.price);
+      
       return actions.order.create({
         purchase_units: [{
           amount: {
-            value: plan.price.toString(),
-            currency_code: 'USD'
+            value: plan.price.toFixed(2),
+            currency_code: 'PHP'
           },
-          description: `Zennest Host Subscription - ${plan.name}`
-        }]
+          description: `Zennest Host Subscription - ${plan.name} Plan`,
+          item_list: {
+            items: [{
+              name: `${plan.name} Plan - ${plan.durationText}`,
+              quantity: '1',
+              unit_amount: {
+                value: plan.price.toFixed(2),
+                currency_code: 'PHP'
+              }
+            }]
+          }
+        }],
+        application_context: {
+          brand_name: 'Zennest',
+          landing_page: 'BILLING',
+          user_action: 'PAY_NOW',
+          return_url: window.location.href,
+          cancel_url: window.location.href
+        }
       });
     } catch (error) {
       console.error('Error creating PayPal order:', error);
@@ -354,10 +427,36 @@ const HostRegistration = () => {
   };
 
   const onApprovePayPalOrder = (data, actions) => {
-    return actions.order.capture().then((details) => {
+    return actions.order.capture().then(async (details) => {
       console.log('PayPal payment approved:', details);
+      console.log('Payment details:', JSON.stringify(details, null, 2));
+      
       if (details.status === 'COMPLETED') {
-        handlePaymentSuccess(details.id);
+        // Retrieve the actual amount paid from PayPal order details
+        const purchaseUnit = details.purchase_units?.[0];
+        const amount = purchaseUnit?.amount;
+        const paidAmount = amount?.value ? parseFloat(amount.value) : null;
+        const currency = amount?.currency_code || 'PHP';
+        
+        // Store payment details
+        setPaymentDetails({
+          paymentId: details.id,
+          orderId: data.orderID,
+          paidAmount: paidAmount,
+          currency: currency,
+          payer: details.payer,
+          createTime: details.create_time,
+          updateTime: details.update_time
+        });
+        
+        // Verify the amount matches the selected plan
+        const selectedPlan = subscriptionPlans[formData.subscriptionPlan || 'pro'];
+        if (paidAmount && Math.abs(paidAmount - selectedPlan.price) > 0.01) {
+          console.warn(`Payment amount mismatch: Expected ${selectedPlan.price}, received ${paidAmount}`);
+          // Still proceed, but log the discrepancy
+        }
+        
+        await handlePaymentSuccess(details.id, paidAmount || selectedPlan.price);
       } else {
         setError('Payment was not completed. Please try again.');
       }
@@ -369,15 +468,26 @@ const HostRegistration = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50/20 pt-16 pb-8 px-4">
-      <div className="max-w-3xl mx-auto">
+      <div className={`mx-auto ${step === 2 ? 'max-w-6xl' : 'max-w-3xl'}`}>
         {/* Back Button */}
-        <button
-          onClick={() => navigate('/')}
-          className="mb-6 flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors group"
-        >
-          <FaArrowLeft className="text-sm group-hover:-translate-x-1 transition-transform" />
-          <span className="text-sm font-medium">Back to Home</span>
-        </button>
+        {step === 1 && (
+          <button
+            onClick={() => navigate('/')}
+            className="mb-6 flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors group"
+          >
+            <FaArrowLeft className="text-sm group-hover:-translate-x-1 transition-transform" />
+            <span className="text-sm font-medium">Back to Home</span>
+          </button>
+        )}
+        {step === 2 && !location.state?.fromVerification && (
+          <button
+            onClick={() => setStep(1)}
+            className="mb-6 flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors group"
+          >
+            <FaArrowLeft className="text-sm group-hover:-translate-x-1 transition-transform" />
+            <span className="text-sm font-medium">Back to Personal Info</span>
+          </button>
+        )}
 
         {/* Progress Steps - Compact */}
         <div className="mb-8">
@@ -400,7 +510,7 @@ const HostRegistration = () => {
                     hidden md:block text-xs font-medium mt-2 transition-colors
                     ${step >= s ? 'text-emerald-700' : 'text-gray-400'}
                   `}>
-                    {s === 1 ? 'Account' : s === 2 ? 'Payment' : 'Complete'}
+                    {s === 1 ? 'Personal Info' : s === 2 ? 'Choose Plan' : 'Congratulations'}
                   </span>
                 </div>
                 {s < 3 && (
@@ -588,63 +698,6 @@ const HostRegistration = () => {
                 )}
               </div>
 
-              <div className="space-y-3">
-                <label className="block text-xs font-semibold text-gray-800">
-                  Subscription Plan <span className="text-rose-500">*</span>
-                </label>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {Object.entries(subscriptionPlans).map(([key, plan]) => (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => setFormData(prev => ({ ...prev, subscriptionPlan: key }))}
-                      className={`
-                        relative p-4 border-2 rounded-xl text-left 
-                        transition-all duration-300 ease-in-out
-                        hover:shadow-lg hover:-translate-y-0.5
-                        ${formData.subscriptionPlan === key
-                          ? 'border-emerald-500 bg-gradient-to-br from-emerald-50 to-white shadow-md shadow-emerald-100 ring-2 ring-emerald-200'
-                          : 'border-gray-200 hover:border-gray-300 bg-white'
-                        }
-                      `}
-                    >
-                      {/* Popular Badge for Annual Plan */}
-                      {key === 'annual' && (
-                        <div className="absolute -top-2 right-3">
-                          <span className="px-2 py-0.5 bg-gradient-to-r from-amber-400 to-orange-500 text-white text-[10px] font-bold rounded-full shadow-md">
-                            SAVE 20%
-                          </span>
-                        </div>
-                      )}
-                      
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-sm font-bold text-gray-900">{plan.name}</span>
-                        <FaCreditCard className={`text-lg ${formData.subscriptionPlan === key ? 'text-emerald-500' : 'text-gray-300'}`} />
-                      </div>
-                      
-                      <div className="mb-2">
-                        <span className="text-2xl font-black bg-gradient-to-r from-emerald-600 to-emerald-700 bg-clip-text text-transparent">
-                          ₱{plan.price.toLocaleString()}
-                        </span>
-                        <span className="text-gray-500 text-xs ml-1">
-                          /{key === 'monthly' ? 'month' : 'year'}
-                        </span>
-                      </div>
-                      
-                      <p className="text-xs text-gray-600 leading-relaxed">{plan.description}</p>
-                      
-                      {/* Checkmark indicator */}
-                      {formData.subscriptionPlan === key && (
-                        <div className="absolute top-3 right-3">
-                          <div className="w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center">
-                            <FaCheck className="text-white text-[10px]" />
-                          </div>
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
 
               {/* Terms and Conditions */}
               <div className="space-y-3">
@@ -691,7 +744,7 @@ const HostRegistration = () => {
                   </>
                 ) : (
                   <>
-                    <span>Continue to Payment</span>
+                    <span>Continue to Email Verification</span>
                     <span className="text-lg">→</span>
                   </>
                 )}
@@ -699,35 +752,35 @@ const HostRegistration = () => {
             </motion.div>
           )}
 
-          {/* Step 2: Payment */}
+          {/* Step 2: Subscription Selection & Payment */}
           {step === 2 && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="space-y-5"
+              className="space-y-8"
             >
-              <div className="text-center mb-6">
-                <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">
-                  Complete Your Subscription
+              <div className="text-center mb-8">
+                <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-3">
+                  Choose Your Plan
                 </h2>
-                <p className="text-sm text-gray-600 max-w-2xl mx-auto">
-                  Pay securely with PayPal to activate your host account
+                <p className="text-base text-gray-600 max-w-2xl mx-auto">
+                  Select the perfect plan for your hosting journey
                 </p>
               </div>
 
               {!auth.currentUser && (
-                <div className="p-3 bg-gradient-to-r from-rose-50 to-red-50 border-l-4 border-rose-500 rounded-lg shadow-sm mb-5">
-                  <div className="flex items-start gap-2">
-                    <div className="flex-shrink-0 w-4 h-4 bg-rose-500 rounded-full flex items-center justify-center mt-0.5">
+                <div className="p-4 bg-gradient-to-r from-rose-50 to-red-50 border-l-4 border-rose-500 rounded-lg shadow-sm mb-6 max-w-3xl mx-auto">
+                  <div className="flex items-start gap-3">
+                    <div className="flex-shrink-0 w-5 h-5 bg-rose-500 rounded-full flex items-center justify-center mt-0.5">
                       <span className="text-white text-xs font-bold">!</span>
                     </div>
                     <div>
-                      <p className="text-rose-700 text-xs font-medium leading-relaxed">
+                      <p className="text-rose-700 text-sm font-medium leading-relaxed">
                         You must be logged in to complete payment. Please log in and try again.
                       </p>
                       <button
                         onClick={() => navigate('/login', { state: { from: '/host/register', step: 2 } })}
-                        className="mt-1.5 text-rose-700 text-xs font-semibold underline hover:text-rose-800 transition-colors"
+                        className="mt-2 text-rose-700 text-sm font-semibold underline hover:text-rose-800 transition-colors"
                       >
                         Go to Login →
                       </button>
@@ -736,138 +789,342 @@ const HostRegistration = () => {
                 </div>
               )}
 
-              <div className="bg-gradient-to-br from-emerald-50 to-white rounded-xl p-5 mb-5 border-2 border-emerald-100 shadow-sm">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-gray-800 font-semibold text-sm">
-                    {subscriptionPlans[formData.subscriptionPlan || 'monthly'].name}
-                  </span>
-                  <div className="text-right">
-                    <span className="text-2xl font-black bg-gradient-to-r from-emerald-600 to-emerald-700 bg-clip-text text-transparent">
-                      ₱{subscriptionPlans[formData.subscriptionPlan || 'monthly'].price.toLocaleString()}
-                    </span>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      /{formData.subscriptionPlan === 'monthly' ? 'month' : 'year'}
-                    </p>
-                  </div>
-                </div>
-                <p className="text-xs text-gray-600 leading-relaxed">
-                  {subscriptionPlans[formData.subscriptionPlan || 'monthly'].description}
-                </p>
+              {/* Subscription Plans Grid - Improved Layout */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6 mb-8">
+                {Object.entries(subscriptionPlans).map(([key, plan]) => {
+                  const isSelected = formData.subscriptionPlan === key;
+                  const IconComponent = 
+                    plan.icon === 'shield' ? FaShieldAlt :
+                    plan.icon === 'star' ? FaStar :
+                    plan.icon === 'sparkle' ? FaCrown : FaShieldAlt;
+                  
+                  return (
+                    <motion.div
+                      key={key}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: key === 'basic' ? 0.1 : key === 'pro' ? 0.2 : 0.3 }}
+                      onClick={() => setFormData(prev => ({ ...prev, subscriptionPlan: key }))}
+                      className={`
+                        relative cursor-pointer rounded-2xl p-6 border-2 transition-all duration-300
+                        flex flex-col h-full bg-white
+                        ${isSelected && plan.popular
+                          ? 'border-orange-500 shadow-xl ring-2 ring-orange-200'
+                          : isSelected
+                          ? 'border-emerald-500 shadow-lg ring-2 ring-emerald-200'
+                          : 'border-gray-200 hover:border-gray-300 hover:shadow-md'
+                        }
+                      `}
+                    >
+                      {/* Most Popular Badge */}
+                      {plan.popular && (
+                        <div className="absolute -top-3 left-1/2 transform -translate-x-1/2 z-20">
+                          <span className="px-3 py-1 bg-gradient-to-r from-orange-400 to-orange-500 text-white text-xs font-bold rounded-full shadow-lg whitespace-nowrap">
+                            MOST POPULAR
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Savings Badge */}
+                      {plan.savings && (
+                        <div className="absolute top-3 -right-2 z-20">
+                          <span className="px-2.5 py-1 bg-emerald-500 text-white text-xs font-bold rounded-full shadow-md whitespace-nowrap">
+                            Save ₱{plan.savings.toFixed(2)}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Icon */}
+                      <div className="flex justify-center mb-4 mt-1">
+                        <div className={`
+                          w-14 h-14 rounded-full flex items-center justify-center transition-colors
+                          ${plan.popular && isSelected
+                            ? 'bg-orange-100'
+                            : isSelected
+                            ? 'bg-emerald-100'
+                            : 'bg-gray-100'
+                          }
+                        `}>
+                          <IconComponent className={`
+                            text-xl transition-colors
+                            ${plan.popular && isSelected
+                              ? 'text-orange-600'
+                              : isSelected
+                              ? 'text-emerald-600'
+                              : 'text-gray-400'
+                            }
+                          `} />
+                        </div>
+                      </div>
+
+                      {/* Plan Name */}
+                      <h3 className="text-lg font-bold text-gray-900 text-center mb-2">
+                        {plan.name}
+                      </h3>
+
+                      {/* Description */}
+                      <p className="text-xs text-gray-600 text-center mb-4 min-h-[2.5rem]">
+                        {plan.description}
+                      </p>
+
+                      {/* Price */}
+                      <div className="text-center mb-5">
+                        <div className="text-2xl font-black text-gray-900 mb-1">
+                          {plan.priceText.split(' / ')[0]}
+                        </div>
+                        <div className="text-xs text-gray-500 font-medium">
+                          {plan.priceText.split(' / ')[1]}
+                        </div>
+                      </div>
+
+                      {/* Features */}
+                      <ul className="space-y-2 mb-6 flex-grow">
+                        {plan.features.map((feature, idx) => (
+                          <li key={idx} className="flex items-start gap-2">
+                            <FaCheckCircle className={`
+                              mt-0.5 flex-shrink-0 text-xs
+                              ${isSelected
+                                ? 'text-emerald-500'
+                                : 'text-gray-400'
+                              }
+                            `} />
+                            <span className={`
+                              text-xs leading-relaxed
+                              ${isSelected
+                                ? 'text-gray-900'
+                                : 'text-gray-600'
+                              }
+                            `}>
+                              {feature}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+
+                      {/* Select Button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFormData(prev => ({ ...prev, subscriptionPlan: key }));
+                        }}
+                        className={`
+                          w-full py-2.5 px-4 rounded-lg font-semibold text-sm transition-all mt-auto
+                          ${isSelected && plan.popular
+                            ? 'bg-orange-500 text-white hover:bg-orange-600 shadow-lg'
+                            : isSelected
+                            ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                          }
+                        `}
+                      >
+                        {isSelected ? 'Selected' : 'Select Plan'}
+                      </button>
+                    </motion.div>
+                  );
+                })}
               </div>
 
-              {error && (
-                <div className="p-3 bg-gradient-to-r from-rose-50 to-red-50 border-l-4 border-rose-500 rounded-lg shadow-sm">
-                  <div className="flex items-start gap-2">
-                    <div className="flex-shrink-0 w-4 h-4 bg-rose-500 rounded-full flex items-center justify-center mt-0.5">
-                      <span className="text-white text-xs font-bold">!</span>
-                    </div>
-                    <p className="text-rose-700 text-xs font-medium leading-relaxed">{error}</p>
-                  </div>
+              {/* Payment Section */}
+              <div className="bg-white rounded-2xl p-6 md:p-8 border-2 border-gray-200 shadow-lg max-w-3xl mx-auto">
+                <div className="text-center mb-6">
+                  <h3 className="text-2xl font-bold text-gray-900 mb-2 flex items-center justify-center gap-3">
+                    <FaCreditCard className="text-emerald-600 text-xl" />
+                    <span>Complete Payment</span>
+                  </h3>
+                  <p className="text-base text-gray-600">
+                    Pay securely with PayPal to activate your <span className="font-semibold text-emerald-700">{subscriptionPlans[formData.subscriptionPlan].name}</span> subscription
+                  </p>
                 </div>
-              )}
 
-              {import.meta.env.VITE_PAYPAL_CLIENT_ID && import.meta.env.VITE_PAYPAL_CLIENT_ID !== 'your-paypal-client-id-here' ? (
-                <div className="bg-white rounded-lg p-3 shadow-sm border border-gray-100">
-                  <PayPalScriptProvider
-                    options={{
-                      'client-id': import.meta.env.VITE_PAYPAL_CLIENT_ID,
-                      currency: 'USD'
-                    }}
-                  >
-                    <PayPalButtons
-                      createOrder={createPayPalOrder}
-                      onApprove={onApprovePayPalOrder}
-                      onError={(err) => {
-                        console.error('PayPal error:', err);
-                        setError('Payment failed. Please try again.');
-                      }}
-                      style={{
-                        layout: 'vertical',
-                        shape: 'rect',
-                        label: 'paypal'
-                      }}
-                    />
-                  </PayPalScriptProvider>
-                </div>
-              ) : (
-                <div className="p-3 bg-gradient-to-r from-amber-50 to-yellow-50 border-l-4 border-amber-500 rounded-lg shadow-sm">
-                  <div className="flex items-start gap-2">
-                    <div className="flex-shrink-0 w-4 h-4 bg-amber-500 rounded-full flex items-center justify-center mt-0.5">
-                      <span className="text-white text-xs font-bold">!</span>
+                {/* Selected Plan Summary */}
+                <div className="bg-gradient-to-br from-emerald-50 to-white rounded-xl p-5 mb-6 border-2 border-emerald-200">
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div className="text-center sm:text-left">
+                      <h4 className="text-lg font-bold text-gray-900 mb-1">
+                        {subscriptionPlans[formData.subscriptionPlan].name} Plan
+                      </h4>
+                      <p className="text-sm text-gray-600">
+                        {subscriptionPlans[formData.subscriptionPlan].listingLimit === -1 
+                          ? 'Unlimited listings' 
+                          : `Up to ${subscriptionPlans[formData.subscriptionPlan].listingLimit} property listings`}
+                      </p>
                     </div>
-                    <div>
-                      <p className="text-amber-800 text-xs font-medium mb-1">
-                        PayPal Client ID not configured. Please add VITE_PAYPAL_CLIENT_ID to your .env file.
-                      </p>
-                      <p className="text-amber-700 text-[10px]">
-                        See PAYPAL_SANDBOX_SETUP.md for instructions.
-                      </p>
+                    <div className="text-center sm:text-right">
+                      <div className="text-3xl font-black text-emerald-700">
+                        {subscriptionPlans[formData.subscriptionPlan].priceText.split(' / ')[0]}
+                      </div>
+                      <div className="text-sm text-gray-500 font-medium">
+                        {subscriptionPlans[formData.subscriptionPlan].priceText.split(' / ')[1]}
+                      </div>
                     </div>
                   </div>
                 </div>
-              )}
 
-              <button
-                onClick={() => setStep(1)}
-                className="w-full text-center text-gray-600 hover:text-gray-900 
-                  py-2.5 px-4 rounded-lg
-                  hover:bg-gray-50
-                  transition-all duration-200
-                  font-medium text-sm
-                  flex items-center justify-center gap-2"
-              >
-                <span>←</span>
-                <span>Back to Account Details</span>
-              </button>
+                {error && (
+                  <div className="p-3 bg-gradient-to-r from-rose-50 to-red-50 border-l-4 border-rose-500 rounded-lg shadow-sm mb-4">
+                    <div className="flex items-start gap-2">
+                      <div className="flex-shrink-0 w-4 h-4 bg-rose-500 rounded-full flex items-center justify-center mt-0.5">
+                        <span className="text-white text-xs font-bold">!</span>
+                      </div>
+                      <p className="text-rose-700 text-xs font-medium leading-relaxed">{error}</p>
+                    </div>
+                  </div>
+                )}
+
+                {import.meta.env.VITE_PAYPAL_CLIENT_ID && import.meta.env.VITE_PAYPAL_CLIENT_ID !== 'your-paypal-client-id-here' ? (
+                  <div className="bg-gray-50 rounded-xl p-6 border-2 border-gray-200">
+                    <PayPalScriptProvider
+                      options={{
+                        'client-id': import.meta.env.VITE_PAYPAL_CLIENT_ID,
+                        currency: 'PHP',
+                        intent: 'capture'
+                      }}
+                    >
+                      <PayPalButtons
+                        createOrder={createPayPalOrder}
+                        onApprove={onApprovePayPalOrder}
+                        onError={(err) => {
+                          console.error('PayPal error:', err);
+                          setError('Payment failed. Please try again.');
+                        }}
+                        style={{
+                          layout: 'vertical',
+                          shape: 'rect',
+                          label: 'paypal',
+                          color: 'blue',
+                          height: 45
+                        }}
+                      />
+                    </PayPalScriptProvider>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-gradient-to-r from-amber-50 to-yellow-50 border-l-4 border-amber-500 rounded-lg shadow-sm">
+                    <div className="flex items-start gap-3">
+                      <div className="flex-shrink-0 w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center mt-0.5">
+                        <span className="text-white text-xs font-bold">!</span>
+                      </div>
+                      <div>
+                        <p className="text-amber-800 text-sm font-medium mb-1">
+                          PayPal Client ID not configured. Please add VITE_PAYPAL_CLIENT_ID to your .env file.
+                        </p>
+                        <p className="text-amber-700 text-xs">
+                          See PAYPAL_SANDBOX_SETUP.md for instructions.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </motion.div>
           )}
 
-          {/* Step 3: Success */}
-          {paymentCompleted && (
+          {/* Step 3: Congratulations */}
+          {step === 3 && paymentCompleted && (
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               className="text-center py-12"
             >
-              <div className="relative inline-block mb-5">
-                <div className="w-20 h-20 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-full flex items-center justify-center shadow-2xl shadow-emerald-200">
-                  <FaCheck className="text-4xl text-white" />
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ duration: 0.6, type: 'spring' }}
+                className="relative inline-block mb-8"
+              >
+                <div className="w-32 h-32 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-full flex items-center justify-center shadow-2xl shadow-emerald-200">
+                  <FaCheckCircle className="text-6xl text-white" />
                 </div>
                 {/* Animated rings */}
-                <div className="absolute inset-0 w-20 h-20 bg-emerald-400 rounded-full animate-ping opacity-20"></div>
-              </div>
+                <motion.div
+                  initial={{ scale: 1, opacity: 0.3 }}
+                  animate={{ scale: 1.5, opacity: 0 }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                  className="absolute inset-0 w-32 h-32 bg-emerald-400 rounded-full"
+                />
+              </motion.div>
               
-              <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">
-                Welcome to Zennest Host! 🎉
-              </h2>
-              <p className="text-sm text-gray-600 mb-1 max-w-md mx-auto">
-                Your subscription has been activated successfully.
-              </p>
-              <p className="text-xs text-gray-500 mb-6">
-                Redirecting to your dashboard in a moment...
-              </p>
+              <motion.h2
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="text-3xl md:text-4xl font-bold text-gray-900 mb-4"
+              >
+                Congratulations! 🎉
+              </motion.h2>
               
-              {loading && (
-                <div className="flex justify-center">
-                  <Loading message="" size="small" fullScreen={false} />
-                </div>
-              )}
+              <motion.p
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+                className="text-xl text-gray-700 mb-2 font-semibold"
+              >
+                You are now a part of Zennest Hosting Service!
+              </motion.p>
               
-              {error && (
-                <div className="mt-4 p-3 bg-gradient-to-r from-amber-50 to-yellow-50 border-l-4 border-amber-500 rounded-lg shadow-sm max-w-md mx-auto">
-                  <div className="flex items-start gap-2">
-                    <div className="flex-shrink-0 w-4 h-4 bg-amber-500 rounded-full flex items-center justify-center mt-0.5">
-                      <span className="text-white text-xs font-bold">!</span>
-                    </div>
-                    <div className="text-left">
-                      <p className="text-amber-800 text-xs font-medium">{error}</p>
-                      <p className="text-amber-700 text-[10px] mt-0.5">
-                        You will still be redirected to the dashboard.
-                      </p>
-                    </div>
+              <motion.p
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.4 }}
+                className="text-sm text-gray-600 mb-8 max-w-lg mx-auto leading-relaxed"
+              >
+                Your {subscriptionPlans[formData.subscriptionPlan]?.name} subscription has been activated successfully. 
+                You can now start listing your properties and welcoming guests!
+              </motion.p>
+
+              {/* Subscription Details */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.5 }}
+                className="bg-gradient-to-br from-emerald-50 to-white rounded-xl p-6 mb-8 border-2 border-emerald-200 shadow-md max-w-md mx-auto"
+              >
+                <h3 className="text-lg font-bold text-gray-900 mb-4">Subscription Details</h3>
+                <div className="space-y-2 text-left">
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">Plan:</span>
+                    <span className="text-sm font-semibold text-gray-900">
+                      {subscriptionPlans[formData.subscriptionPlan]?.name}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">Amount Paid:</span>
+                    <span className="text-sm font-semibold text-emerald-700">
+                      {paymentDetails?.paidAmount 
+                        ? `₱${paymentDetails.paidAmount.toLocaleString()}` 
+                        : `₱${subscriptionPlans[formData.subscriptionPlan]?.price.toLocaleString()}`}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">Listing Limit:</span>
+                    <span className="text-sm font-semibold text-gray-900">
+                      {subscriptionPlans[formData.subscriptionPlan]?.listingLimit === -1 
+                        ? 'Unlimited' 
+                        : `${subscriptionPlans[formData.subscriptionPlan]?.listingLimit} listings`}
+                    </span>
                   </div>
                 </div>
-              )}
+              </motion.div>
+              
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.6 }}
+                className="flex flex-col sm:flex-row gap-4 justify-center"
+              >
+                <button
+                  onClick={() => navigate('/host/dashboard')}
+                  className="px-8 py-3 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white font-bold rounded-lg hover:from-emerald-700 hover:to-emerald-800 transition-all shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
+                >
+                  Go to Dashboard
+                </button>
+                <button
+                  onClick={() => navigate('/host/listings/new')}
+                  className="px-8 py-3 bg-white text-emerald-700 font-bold rounded-lg border-2 border-emerald-600 hover:bg-emerald-50 transition-all shadow-md hover:shadow-lg transform hover:scale-105 active:scale-95"
+                >
+                  Create Your First Listing
+                </button>
+              </motion.div>
             </motion.div>
           )}
         </div>
