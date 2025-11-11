@@ -69,7 +69,7 @@ const PaymentProcessing = () => {
   const [paymentTiming, setPaymentTiming] = useState('now'); // 'now' or 'later'
   
   // Step 2: Payment method
-  const [paymentMethod, setPaymentMethod] = useState('wallet'); // 'wallet' or 'paypal'
+  const [paymentMethod, setPaymentMethod] = useState('wallet'); // 'wallet', 'paypal', or 'creditcard'
   const [paypalEmail, setPaypalEmail] = useState('');
   
   // Step 3: Message to host
@@ -315,14 +315,16 @@ const PaymentProcessing = () => {
       setCurrentStep(2);
     } else if (currentStep === 2) {
       // Validate payment method
-      if (paymentMethod === 'paypal' && !paypalEmail.trim()) {
-        alert('Please enter your PayPal email address');
+      if ((paymentMethod === 'paypal' || paymentMethod === 'creditcard') && !paypalEmail.trim()) {
+        alert(paymentMethod === 'creditcard' ? 'Please enter your email address for payment confirmation' : 'Please enter your PayPal email address');
         return;
       }
       if (paymentMethod === 'wallet' && walletBalance < finalTotal) {
-        alert('Insufficient wallet balance. Please top up your wallet or use PayPal.');
+        alert('Insufficient wallet balance. Please top up your wallet or use another payment method.');
         return;
       }
+      // Credit card and PayPal both use PayPal payment processor
+      // No additional validation needed for credit card
       // Recalculate totals when moving to next step to ensure promo code is still valid
       if (appliedPromoCode) {
         const currentBookingData = bookingData || (() => {
@@ -368,9 +370,9 @@ const PaymentProcessing = () => {
       listingCategory: listing.category,
       status: paymentTiming === 'now' ? 'pending' : 'reserved',
       paymentStatus: paymentTiming === 'now' ? 'pending' : 'scheduled',
-      paymentMethod: paymentMethod,
+      paymentMethod: paymentMethod === 'creditcard' ? 'paypal' : paymentMethod, // Credit card uses PayPal processor
       paymentTiming: paymentTiming,
-      paypalEmail: paymentMethod === 'paypal' ? paypalEmail : null,
+      paypalEmail: (paymentMethod === 'paypal' || paymentMethod === 'creditcard') ? paypalEmail : null,
       checkIn: finalBookingData.checkIn || null,
       checkOut: finalBookingData.checkOut || null,
       guests: finalBookingData.guests || 1,
@@ -624,8 +626,8 @@ const PaymentProcessing = () => {
       return;
     }
 
-    // For PayPal, create booking first and show PayPal buttons
-    if (paymentMethod === 'paypal' && paymentTiming === 'now') {
+    // For PayPal or Credit Card, create booking first and show PayPal buttons
+    if ((paymentMethod === 'paypal' || paymentMethod === 'creditcard') && paymentTiming === 'now') {
       try {
         setProcessing(true);
         const bookingId = await createBooking();
@@ -1079,7 +1081,7 @@ const PaymentProcessing = () => {
                         </div>
                         <div className="flex-1">
                           <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm mb-1">
-                            <FaPaypal className="text-blue-600" />
+                            <FaPaypal className="text-yellow-500" />
                             PayPal
                           </h3>
                           <p className="text-xs text-gray-600">
@@ -1088,16 +1090,42 @@ const PaymentProcessing = () => {
                         </div>
                       </div>
                     </button>
+
+                    <button
+                      onClick={() => setPaymentMethod('creditcard')}
+                      className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
+                        paymentMethod === 'creditcard'
+                          ? 'border-emerald-600 bg-emerald-50'
+                          : 'border-gray-200 hover:border-emerald-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                          paymentMethod === 'creditcard' ? 'border-emerald-600 bg-emerald-600' : 'border-gray-300'
+                        }`}>
+                          {paymentMethod === 'creditcard' && <FaCheckCircle className="w-3 h-3 text-white" />}
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm mb-1">
+                            <FaCreditCard className="text-gray-700" />
+                            Credit Card
+                          </h3>
+                          <p className="text-xs text-gray-600">
+                            Pay with Visa, Mastercard, or other cards
+                          </p>
+                        </div>
+                      </div>
+                    </button>
                   </div>
 
-                  {paymentMethod === 'paypal' && (
+                  {(paymentMethod === 'paypal' || paymentMethod === 'creditcard') && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
                       className="mt-3"
                     >
                       <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-                        PayPal Email Address
+                        {paymentMethod === 'creditcard' ? 'Email Address' : 'PayPal Email Address'}
                       </label>
                       <input
                         type="email"
@@ -1106,6 +1134,12 @@ const PaymentProcessing = () => {
                         placeholder="your.email@example.com"
                         className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-emerald-500 focus:outline-none text-sm"
                       />
+                      {paymentMethod === 'creditcard' && (
+                        <p className="mt-2 text-xs text-blue-600 flex items-start gap-1">
+                          <FaInfoCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                          <span>Credit card payments are processed securely through PayPal. You'll complete payment in the next step.</span>
+                        </p>
+                      )}
                     </motion.div>
                   )}
                 </motion.div>
@@ -1253,17 +1287,22 @@ const PaymentProcessing = () => {
                               <FaWallet className="text-emerald-600 w-3 h-3" />
                               Wallet
                             </>
+                          ) : paymentMethod === 'creditcard' ? (
+                            <>
+                              <FaCreditCard className="text-gray-700 w-3 h-3" />
+                              Credit Card
+                            </>
                           ) : (
                             <>
-                              <FaPaypal className="text-blue-600 w-3 h-3" />
+                              <FaPaypal className="text-yellow-500 w-3 h-3" />
                               PayPal
                             </>
                           )}
                         </span>
                       </div>
-                      {paymentMethod === 'paypal' && paypalEmail && (
+                      {(paymentMethod === 'paypal' || paymentMethod === 'creditcard') && paypalEmail && (
                         <div className="flex justify-between text-xs">
-                          <span className="text-gray-600">PayPal Email</span>
+                          <span className="text-gray-600">{paymentMethod === 'creditcard' ? 'Email' : 'PayPal Email'}</span>
                           <span className="font-medium text-gray-900 truncate ml-2">{paypalEmail}</span>
                         </div>
                       )}
@@ -1312,7 +1351,7 @@ const PaymentProcessing = () => {
                 </button>
               ) : (
                 <>
-                  {paymentMethod === 'paypal' && paymentTiming === 'now' && pendingBookingId ? (
+                  {(paymentMethod === 'paypal' || paymentMethod === 'creditcard') && paymentTiming === 'now' && pendingBookingId ? (
                     <div className="w-full">
                       {import.meta.env.VITE_PAYPAL_CLIENT_ID && import.meta.env.VITE_PAYPAL_CLIENT_ID !== 'your-paypal-client-id-here' ? (
                         <PayPalScriptProvider
@@ -1320,7 +1359,7 @@ const PaymentProcessing = () => {
                             'client-id': import.meta.env.VITE_PAYPAL_CLIENT_ID,
                             currency: 'PHP',
                             intent: 'capture',
-                            components: 'buttons'
+                            components: 'buttons,card'
                             // PayPal automatically detects sandbox vs live based on client ID
                             // Sandbox client IDs have specific patterns that PayPal recognizes
                           }}
@@ -1341,11 +1380,11 @@ const PaymentProcessing = () => {
                             style={{
                               layout: 'vertical',
                               shape: 'rect',
-                              label: 'paypal',
-                              color: 'blue',
+                              label: paymentMethod === 'creditcard' ? 'pay' : 'paypal',
+                              color: 'gold',
                               height: 45
                             }}
-                            fundingSource="paypal"
+                            fundingSource={paymentMethod === 'creditcard' ? undefined : 'paypal'}
                           />
                         </PayPalScriptProvider>
                       ) : (

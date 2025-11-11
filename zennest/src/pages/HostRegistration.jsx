@@ -985,7 +985,7 @@ const HostRegistration = () => {
                         'client-id': import.meta.env.VITE_PAYPAL_CLIENT_ID,
                         currency: 'PHP',
                         intent: 'capture',
-                        components: 'buttons'
+                        components: 'buttons,card'
                       }}
                     >
                       <PayPalButtons
@@ -1010,10 +1010,9 @@ const HostRegistration = () => {
                           layout: 'vertical',
                           shape: 'rect',
                           label: 'paypal',
-                          color: 'blue',
+                          color: 'gold',
                           height: 45
                         }}
-                        fundingSource="paypal"
                       />
                     </PayPalScriptProvider>
                   </div>
