@@ -12,7 +12,7 @@ import Footer from "./components/Footer";
 import RouteErrorBoundary from "./components/RouteErrorBoundary";
 import AdminRoute from "./components/AdminRoute";
 import Loading from "./components/Loading";
-
+//adding a new comment to push
 // Pages
 import LandingPage from "./pages/LandingPage";
 import HomeStays from "./pages/HomeStays";
