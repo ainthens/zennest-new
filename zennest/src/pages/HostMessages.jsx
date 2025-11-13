@@ -293,6 +293,12 @@ const HostMessages = () => {
 
       if (result.success) {
         setNewMessage('');
+        // Keep input focused after sending - use requestAnimationFrame for better reliability
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            messageInputRef.current?.focus();
+          }, 10);
+        });
       } else {
         alert('Failed to send message. Please try again.');
       }
@@ -301,6 +307,12 @@ const HostMessages = () => {
       alert('Failed to send message. Please try again.');
     } finally {
       setSending(false);
+      // Keep input focused even on error
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          messageInputRef.current?.focus();
+        }, 10);
+      });
     }
   };
 
@@ -846,6 +858,7 @@ const HostMessages = () => {
                     <form onSubmit={handleSendMessage} className="p-3 sm:p-4 border-t border-gray-200 bg-white">
                       <div className="flex items-center gap-2 sm:gap-3">
                         <input
+                          ref={messageInputRef}
                           type="text"
                           value={newMessage}
                           onChange={handleInputChange}
