@@ -15,7 +15,7 @@ import {
 } from '@paypal/react-paypal-js';
 import { doc, getDoc, setDoc, collection, addDoc, serverTimestamp, updateDoc, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { validatePromoCode, updateCoupon, transferPaymentToHost, getHostProfile } from '../services/firestoreService';
+import { validatePromoCode, updateCoupon, transferPaymentToHost, getHostProfile, getClaimedVouchers, applyVoucher, markVoucherUsed } from '../services/firestoreService';
 import { sendBookingConfirmationEmail } from '../services/emailService';
 import useAuth from '../hooks/useAuth';
 import SettingsHeader from '../components/SettingsHeader';
@@ -36,7 +36,10 @@ import {
   FaTimes,
   FaInfoCircle,
   FaTag,
-  FaCheck
+  FaCheck,
+  FaTicketAlt,
+  FaPercent,
+  FaTimesCircle
 } from 'react-icons/fa';
 
 /**
@@ -186,6 +189,14 @@ const PaymentProcessing = () => {
   const [validatingPromoCode, setValidatingPromoCode] = useState(false);
   const [promoDiscount, setPromoDiscount] = useState(0);
 
+  // Voucher state
+  const [availableVouchers, setAvailableVouchers] = useState([]);
+  const [selectedVoucher, setSelectedVoucher] = useState(null);
+  const [voucherDiscount, setVoucherDiscount] = useState(0);
+  const [voucherError, setVoucherError] = useState('');
+  const [loadingVouchers, setLoadingVouchers] = useState(false);
+  const [applyingVoucher, setApplyingVoucher] = useState(false);
+
   const [totalAmount, setTotalAmount] = useState(0);
   const [serviceFee, setServiceFee] = useState(0);
   const [finalTotal, setFinalTotal] = useState(0);
@@ -301,6 +312,11 @@ const PaymentProcessing = () => {
 
       // calculate totals
       calculateTotals(data, listingData);
+
+      // Fetch available vouchers for the guest
+      if (user.uid) {
+        fetchAvailableVouchers(user.uid);
+      }
     } catch (error) {
       console.error('Error fetching data:', error);
       alert('Failed to load booking information. Please try again.');
@@ -309,7 +325,121 @@ const PaymentProcessing = () => {
     }
   };
 
-  const calculateTotals = (data, listingData = null, promoDiscountAmount = 0) => {
+  // Fetch available vouchers for the guest
+  const fetchAvailableVouchers = async (guestId) => {
+    try {
+      setLoadingVouchers(true);
+      const result = await getClaimedVouchers(guestId);
+      if (result.success) {
+        // Filter out expired and used vouchers
+        const now = new Date();
+        const validVouchers = result.data.filter(voucher => {
+          if (voucher.isUsed) return false;
+          if (voucher.usageCount >= (voucher.usageLimit || 1)) return false;
+          if (voucher.expirationDate) {
+            const expDate = voucher.expirationDate instanceof Date ? voucher.expirationDate : new Date(voucher.expirationDate);
+            if (expDate < now) return false;
+          }
+          return true;
+        });
+        setAvailableVouchers(validVouchers);
+      }
+    } catch (error) {
+      console.error('Error fetching vouchers:', error);
+    } finally {
+      setLoadingVouchers(false);
+    }
+  };
+
+  // Apply voucher to booking
+  const handleApplyVoucher = async (voucherId) => {
+    if (!voucherId || !user?.uid || !listing) {
+      setVoucherError('Unable to apply voucher');
+      return;
+    }
+
+    setApplyingVoucher(true);
+    setVoucherError('');
+
+    try {
+      const currentBookingData = bookingData || (() => {
+        try {
+          const s = sessionStorage.getItem('bookingData');
+          return s ? JSON.parse(s) : null;
+        } catch {
+          return null;
+        }
+      })();
+
+      if (!currentBookingData) {
+        setVoucherError('Booking data not found');
+        setApplyingVoucher(false);
+        return;
+      }
+
+      // Calculate current subtotal for voucher application
+      const baseRate = listing.discount > 0
+        ? (listing.rate || 0) * (1 - listing.discount / 100)
+        : (listing.rate || 0);
+
+      let subtotal = 0;
+      if (listing.category === 'home') {
+        const nights = currentBookingData.nights || 0;
+        subtotal = nights > 0 ? baseRate * nights * (currentBookingData.guests || 1) : baseRate;
+      } else {
+        subtotal = baseRate * (currentBookingData.guests || 1);
+      }
+
+      // Apply voucher
+      const result = await applyVoucher(voucherId, user.uid, subtotal);
+      
+      if (result.success) {
+        setSelectedVoucher(result.voucher);
+        setVoucherError('');
+        calculateTotals(currentBookingData, listing, promoDiscount, result.discountAmount);
+      } else {
+        setVoucherError(result.error || 'Failed to apply voucher');
+        setSelectedVoucher(null);
+        calculateTotals(currentBookingData, listing, promoDiscount, 0);
+      }
+    } catch (error) {
+      console.error('Error applying voucher:', error);
+      setVoucherError(error.message || 'Failed to apply voucher');
+      setSelectedVoucher(null);
+      const currentBookingData = bookingData || (() => {
+        try {
+          const s = sessionStorage.getItem('bookingData');
+          return s ? JSON.parse(s) : null;
+        } catch {
+          return null;
+        }
+      })();
+      if (currentBookingData) {
+        calculateTotals(currentBookingData, listing, promoDiscount, 0);
+      }
+    } finally {
+      setApplyingVoucher(false);
+    }
+  };
+
+  // Remove voucher
+  const handleRemoveVoucher = () => {
+    setSelectedVoucher(null);
+    setVoucherError('');
+    const currentBookingData = bookingData || (() => {
+      try {
+        const s = sessionStorage.getItem('bookingData');
+        return s ? JSON.parse(s) : null;
+      } catch {
+        return null;
+      }
+    })();
+    if (currentBookingData) {
+      calculateTotals(currentBookingData, listing, promoDiscount, 0);
+    }
+  };
+
+  const calculateTotals = (data, listingData = null, promoDiscountAmount = 0, voucherDiscountAmount = 0) => {
     const listingToUse = listingData || listing;
     if (!listingToUse) return;
 
@@ -325,7 +455,11 @@ const PaymentProcessing = () => {
       subtotal = baseRate * (data.guests || 1);
     }
 
-    const subtotalAfterPromo = Math.max(0, subtotal - promoDiscountAmount);
+    // Apply voucher discount first (percentage off), then promo code (fixed amount)
+    const subtotalAfterVoucher = voucherDiscountAmount > 0 
+      ? Math.max(0, subtotal - voucherDiscountAmount)
+      : subtotal;
+    const subtotalAfterPromo = Math.max(0, subtotalAfterVoucher - promoDiscountAmount);
     const fee = Math.round(subtotalAfterPromo * 0.05);
     const total = subtotalAfterPromo + fee;
 
@@ -333,6 +467,7 @@ const PaymentProcessing = () => {
     setServiceFee(fee);
     setFinalTotal(total);
     setPromoDiscount(promoDiscountAmount);
+    setVoucherDiscount(voucherDiscountAmount);
   };
 
   const handleApplyPromoCode = async () => {
@@ -384,11 +519,11 @@ const PaymentProcessing = () => {
       if (result.success) {
         setAppliedPromoCode(result.coupon);
         setPromoCodeError('');
-        calculateTotals(currentBookingData, listing, result.discountAmount || 0);
+        calculateTotals(currentBookingData, listing, result.discountAmount || 0, voucherDiscount);
       } else {
         setPromoCodeError(result.error || 'Invalid promo code');
         setAppliedPromoCode(null);
-        calculateTotals(currentBookingData, listing, 0);
+        calculateTotals(currentBookingData, listing, 0, voucherDiscount);
       }
     } catch (error) {
       console.error('Error validating promo code:', error);
@@ -410,7 +545,7 @@ const PaymentProcessing = () => {
       } catch { return null; }
     })();
     if (currentBookingData && listing) {
-      calculateTotals(currentBookingData, listing, 0);
+      calculateTotals(currentBookingData, listing, 0, voucherDiscount);
     }
   };
 
@@ -429,6 +564,11 @@ const PaymentProcessing = () => {
 
       if (appliedPromoCode) {
         await handleApplyPromoCode();
+      }
+
+      // Apply voucher if selected but not yet applied
+      if (selectedVoucher && !voucherDiscount) {
+        await handleApplyVoucher(selectedVoucher.id);
       }
 
       setCurrentStep(3);
@@ -471,6 +611,9 @@ const PaymentProcessing = () => {
       promoCode: appliedPromoCode?.code || null,
       promoCodeId: appliedPromoCode?.id || null,
       promoDiscount: promoDiscount,
+      voucherCode: selectedVoucher?.code || null,
+      voucherId: selectedVoucher?.id || null,
+      voucherDiscount: voucherDiscount,
       serviceFee: serviceFee,
       total: finalTotal,
       messageToHost: messageToHost.trim() || null,
@@ -499,6 +642,10 @@ const PaymentProcessing = () => {
       description: `Booking payment for ${listing.title}`,
       paymentMethod: 'wallet',
       bookingId: bookingId,
+      promoCode: appliedPromoCode?.code || null,
+      promoDiscount: promoDiscount || 0,
+      voucherCode: selectedVoucher?.code || null,
+      voucherDiscount: voucherDiscount || 0,
       createdAt: serverTimestamp()
     });
 
@@ -508,6 +655,17 @@ const PaymentProcessing = () => {
       status: 'pending_approval', // Status remains pending_approval until host approves
       updatedAt: serverTimestamp()
     });
+
+    // Mark voucher as used after successful wallet payment
+    if (selectedVoucher && selectedVoucher.id) {
+      try {
+        await markVoucherUsed(selectedVoucher.id, bookingId);
+        console.log('✅ Voucher marked as used:', selectedVoucher.code);
+      } catch (err) {
+        console.error('Error marking voucher as used:', err);
+        // Don't fail the payment if voucher marking fails
+      }
+    }
   };
 
   const handlePayPalSuccess = async (paymentId, paymentDetails = {}) => {
@@ -565,6 +723,17 @@ const PaymentProcessing = () => {
         }
       }
 
+      // Mark voucher as used after successful payment
+      if (selectedVoucher && selectedVoucher.id) {
+        try {
+          await markVoucherUsed(selectedVoucher.id, bookingIdToUse);
+          console.log('✅ Voucher marked as used:', selectedVoucher.code);
+        } catch (err) {
+          console.error('Error marking voucher as used:', err);
+          // Don't fail the payment if voucher marking fails
+        }
+      }
+
       const transactionsRef = collection(db, 'transactions');
       await addDoc(transactionsRef, {
         userId: user.uid,
@@ -579,6 +748,8 @@ const PaymentProcessing = () => {
         paypalOrderId: orderId || null,
         promoCode: appliedPromoCode?.code || null,
         promoDiscount: promoDiscount || 0,
+        voucherCode: selectedVoucher?.code || null,
+        voucherDiscount: voucherDiscount || 0,
         createdAt: serverTimestamp(),
         completedAt: serverTimestamp()
       });
@@ -751,6 +922,17 @@ const PaymentProcessing = () => {
           });
         } catch (err) {
           console.error('Error updating promo usage', err);
+        }
+      }
+
+      // Mark voucher as used after successful booking
+      if (selectedVoucher && selectedVoucher.id) {
+        try {
+          await markVoucherUsed(selectedVoucher.id, bookingId);
+          console.log('✅ Voucher marked as used:', selectedVoucher.code);
+        } catch (err) {
+          console.error('Error marking voucher as used:', err);
+          // Don't fail the booking if voucher marking fails
         }
       }
 
@@ -1040,6 +1222,56 @@ const PaymentProcessing = () => {
                     {promoCodeError && (<p className="mt-2 text-xs text-red-600 flex items-center gap-1"><FaTimes className="w-3 h-3" />{promoCodeError}</p>)}
                   </div>
 
+                  {/* Voucher Selection */}
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      <FaTicketAlt className="inline mr-2 text-emerald-600" />
+                      Voucher (Optional)
+                    </label>
+                    {!selectedVoucher ? (
+                      <div className="space-y-2">
+                        {loadingVouchers ? (
+                          <div className="flex items-center justify-center py-4">
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald-600"></div>
+                          </div>
+                        ) : availableVouchers.length > 0 ? (
+                          <select
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                handleApplyVoucher(e.target.value);
+                              }
+                            }}
+                            className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-emerald-500 focus:outline-none text-sm"
+                            disabled={applyingVoucher}
+                            defaultValue=""
+                          >
+                            <option value="">Select a voucher...</option>
+                            {availableVouchers.map((voucher) => (
+                              <option key={voucher.id} value={voucher.id}>
+                                {voucher.code} - {voucher.discountPercentage}% off
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <p className="text-xs text-gray-500 text-center py-2">No vouchers available. <a href="/vouchers" className="text-emerald-600 hover:underline">Claim vouchers</a></p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-emerald-300">
+                        <div className="flex items-center gap-2">
+                          <FaCheckCircle className="text-emerald-600" />
+                          <span className="font-mono font-semibold text-emerald-700">{selectedVoucher.code}</span>
+                          <span className="text-sm text-gray-600">- {selectedVoucher.discountPercentage}% off</span>
+                        </div>
+                        <button onClick={handleRemoveVoucher} className="text-gray-400 hover:text-red-600 transition-colors" title="Remove voucher" disabled={applyingVoucher}>
+                          <FaTimes className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                    {voucherError && (<p className="mt-2 text-xs text-red-600 flex items-center gap-1"><FaTimes className="w-3 h-3" />{voucherError}</p>)}
+                    {applyingVoucher && (<p className="mt-2 text-xs text-gray-600 flex items-center gap-1">Applying voucher...</p>)}
+                  </div>
+
                   <div className="space-y-3">
                     <button onClick={() => setPaymentMethod('wallet')} className={`w-full p-4 rounded-lg border-2 transition-all text-left ${paymentMethod === 'wallet' ? 'border-emerald-600 bg-emerald-50' : 'border-gray-200 hover:border-emerald-300'}`}>
                       <div className="flex items-center gap-3">
@@ -1143,6 +1375,7 @@ const PaymentProcessing = () => {
                     <h3 className="font-semibold text-gray-900 mb-3 text-sm">Payment Summary</h3>
                     <div className="space-y-2">
                       <div className="flex justify-between text-xs"><span className="text-gray-600">Subtotal</span><span className="font-medium text-gray-900">₱{totalAmount.toLocaleString()}</span></div>
+                      {selectedVoucher && voucherDiscount > 0 && (<div className="flex justify-between text-xs"><span className="text-gray-600 flex items-center gap-1"><FaTicketAlt className="text-emerald-600" /> Voucher ({selectedVoucher.code})</span><span className="font-medium text-emerald-600">-₱{voucherDiscount.toLocaleString()}</span></div>)}
                       {appliedPromoCode && promoDiscount > 0 && (<div className="flex justify-between text-xs"><span className="text-gray-600 flex items-center gap-1"><FaTag className="text-emerald-600" /> Promo Code ({appliedPromoCode.code})</span><span className="font-medium text-emerald-600">-₱{promoDiscount.toLocaleString()}</span></div>)}
                       <div className="flex justify-between text-xs"><span className="text-gray-600">Service fee</span><span className="font-medium text-gray-900">₱{serviceFee.toLocaleString()}</span></div>
                       <div className="pt-2 border-t border-gray-300 flex justify-between"><span className="font-bold text-gray-900 text-sm">Total</span><span className="font-bold text-emerald-600 text-base">₱{finalTotal.toLocaleString()}</span></div>

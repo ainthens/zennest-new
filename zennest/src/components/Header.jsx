@@ -20,6 +20,7 @@ import {
   FaCalendarCheck,
   FaStar,
   FaUser,
+  FaTicketAlt,
 } from "react-icons/fa";
 import { motion, AnimatePresence } from "framer-motion";
 import { getGuestProfile, getHostProfile } from "../services/firestoreService";
@@ -514,9 +515,9 @@ const Header = () => {
                                 onHover={() => setMobileHighlightedIndex(2)}
                               />
                               <MobileMenuItem
-                                icon={FaStar}
-                                label="Points"
-                                onClick={() => handleNavigation("/points")}
+                                icon={FaTicketAlt}
+                                label="Vouchers"
+                                onClick={() => handleNavigation("/vouchers")}
                                 index={3}
                                 highlighted={mobileHighlightedIndex === 3}
                                 onHover={() => setMobileHighlightedIndex(3)}
@@ -877,14 +878,14 @@ const Header = () => {
                                 color="purple"
                               />
                               <DesktopMenuItem
-                                icon={FaStar}
-                                label="Points"
-                                description="Rewards program"
-                                onClick={() => handleNavigation("/points")}
+                                icon={FaTicketAlt}
+                                label="Vouchers"
+                                description="Discount vouchers"
+                                onClick={() => handleNavigation("/vouchers")}
                                 index={3}
                                 highlighted={highlightedIndex === 3}
                                 onHover={() => setHighlightedIndex(3)}
-                                color="amber"
+                                color="emerald"
                               />
                               <DesktopMenuItem
                                 icon={FaWallet}

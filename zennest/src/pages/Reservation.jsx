@@ -1,5 +1,6 @@
 // src/pages/Reservation.jsx
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   getHostBookings, 
   approveBooking, 
@@ -26,7 +27,8 @@ import {
   FaHourglassHalf,
   FaExclamationTriangle,
   FaCheck,
-  FaBan
+  FaBan,
+  FaTimes
 } from 'react-icons/fa';
 
 const Reservation = () => {
@@ -36,6 +38,15 @@ const Reservation = () => {
   const [filter, setFilter] = useState('pending'); // pending, all, approved, rejected, cancelled
   const [processing, setProcessing] = useState(null); // bookingId being processed
   const [error, setError] = useState('');
+  
+  // Modal states
+  const [showApproveBookingModal, setShowApproveBookingModal] = useState(false);
+  const [showRejectBookingModal, setShowRejectBookingModal] = useState(false);
+  const [showApproveCancellationModal, setShowApproveCancellationModal] = useState(false);
+  const [showRejectCancellationModal, setShowRejectCancellationModal] = useState(false);
+  const [selectedBooking, setSelectedBooking] = useState(null);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -135,15 +146,24 @@ const Reservation = () => {
     }
   };
 
-  const handleApproveBooking = async (bookingId) => {
-    if (!user?.uid) return;
+  const handleApproveBookingClick = (bookingId) => {
+    const booking = bookings.find(b => b.id === bookingId);
+    if (booking) {
+      setSelectedBooking(booking);
+      setShowApproveBookingModal(true);
+    }
+  };
+
+  const handleApproveBooking = async () => {
+    if (!user?.uid || !selectedBooking) return;
 
     try {
-      setProcessing(bookingId);
+      setProcessing(selectedBooking.id);
       setError('');
+      setSuccessMessage('');
 
       // Approve booking
-      const result = await approveBooking(bookingId, user.uid);
+      const result = await approveBooking(selectedBooking.id, user.uid);
       
       if (!result.success) {
         throw new Error(result.error || 'Failed to approve booking');
@@ -151,62 +171,87 @@ const Reservation = () => {
 
       // Send confirmation emails
       try {
-        await sendBookingConfirmationEmails({ id: bookingId, ...result.booking });
+        await sendBookingConfirmationEmails({ id: selectedBooking.id, ...result.booking });
       } catch (emailError) {
         console.error('Error sending confirmation emails:', emailError);
         // Don't block the approval if email fails
       }
 
+      // Close modal
+      setShowApproveBookingModal(false);
+      setSelectedBooking(null);
+
       // Refresh reservations
       await fetchReservations();
-      alert('Booking approved successfully! Confirmation emails have been sent.');
+      setSuccessMessage('Booking approved successfully! Confirmation emails have been sent.');
+      setTimeout(() => setSuccessMessage(''), 5000);
     } catch (error) {
       console.error('Error approving booking:', error);
       setError(error.message || 'Failed to approve booking. Please try again.');
-      alert(`Failed to approve booking: ${error.message || 'Please try again.'}`);
     } finally {
       setProcessing(null);
     }
   };
 
-  const handleRejectBooking = async (bookingId) => {
-    if (!user?.uid) return;
+  const handleRejectBookingClick = (bookingId) => {
+    const booking = bookings.find(b => b.id === bookingId);
+    if (booking) {
+      setSelectedBooking(booking);
+      setRejectionReason('');
+      setShowRejectBookingModal(true);
+    }
+  };
 
-    const reason = window.prompt('Please provide a reason for rejecting this booking (optional):');
-    if (reason === null) return; // User cancelled
+  const handleRejectBooking = async () => {
+    if (!user?.uid || !selectedBooking) return;
 
     try {
-      setProcessing(bookingId);
+      setProcessing(selectedBooking.id);
       setError('');
+      setSuccessMessage('');
 
       // Reject booking
-      const result = await rejectBooking(bookingId, user.uid, reason || null);
+      const result = await rejectBooking(selectedBooking.id, user.uid, rejectionReason.trim() || null);
       
       if (!result.success) {
         throw new Error(result.error || 'Failed to reject booking');
       }
 
+      // Close modal
+      setShowRejectBookingModal(false);
+      setSelectedBooking(null);
+      setRejectionReason('');
+
       // Refresh reservations
       await fetchReservations();
-      alert('Booking rejected successfully.');
+      setSuccessMessage('Booking rejected successfully.');
+      setTimeout(() => setSuccessMessage(''), 5000);
     } catch (error) {
       console.error('Error rejecting booking:', error);
       setError(error.message || 'Failed to reject booking. Please try again.');
-      alert(`Failed to reject booking: ${error.message || 'Please try again.'}`);
     } finally {
       setProcessing(null);
     }
   };
 
-  const handleApproveCancellation = async (bookingId) => {
-    if (!user?.uid) return;
+  const handleApproveCancellationClick = (bookingId) => {
+    const booking = bookings.find(b => b.id === bookingId);
+    if (booking) {
+      setSelectedBooking(booking);
+      setShowApproveCancellationModal(true);
+    }
+  };
+
+  const handleApproveCancellation = async () => {
+    if (!user?.uid || !selectedBooking) return;
 
     try {
-      setProcessing(bookingId);
+      setProcessing(selectedBooking.id);
       setError('');
+      setSuccessMessage('');
 
       // Approve cancellation
-      const result = await approveCancellation(bookingId, user.uid);
+      const result = await approveCancellation(selectedBooking.id, user.uid);
       
       if (!result.success) {
         throw new Error(result.error || 'Failed to approve cancellation');
@@ -214,48 +259,64 @@ const Reservation = () => {
 
       // Send cancellation emails
       try {
-        await sendCancellationEmails({ id: bookingId, ...result.booking });
+        await sendCancellationEmails({ id: selectedBooking.id, ...result.booking });
       } catch (emailError) {
         console.error('Error sending cancellation emails:', emailError);
         // Don't block the approval if email fails
       }
 
+      // Close modal
+      setShowApproveCancellationModal(false);
+      setSelectedBooking(null);
+
       // Refresh reservations
       await fetchReservations();
-      alert('Cancellation approved successfully! Cancellation emails have been sent.');
+      setSuccessMessage('Cancellation approved successfully! Cancellation emails have been sent.');
+      setTimeout(() => setSuccessMessage(''), 5000);
     } catch (error) {
       console.error('Error approving cancellation:', error);
       setError(error.message || 'Failed to approve cancellation. Please try again.');
-      alert(`Failed to approve cancellation: ${error.message || 'Please try again.'}`);
     } finally {
       setProcessing(null);
     }
   };
 
-  const handleRejectCancellation = async (bookingId) => {
-    if (!user?.uid) return;
+  const handleRejectCancellationClick = (bookingId) => {
+    const booking = bookings.find(b => b.id === bookingId);
+    if (booking) {
+      setSelectedBooking(booking);
+      setRejectionReason('');
+      setShowRejectCancellationModal(true);
+    }
+  };
 
-    const reason = window.prompt('Please provide a reason for rejecting this cancellation (optional):');
-    if (reason === null) return; // User cancelled
+  const handleRejectCancellation = async () => {
+    if (!user?.uid || !selectedBooking) return;
 
     try {
-      setProcessing(bookingId);
+      setProcessing(selectedBooking.id);
       setError('');
+      setSuccessMessage('');
 
       // Reject cancellation
-      const result = await rejectCancellation(bookingId, user.uid, reason || null);
+      const result = await rejectCancellation(selectedBooking.id, user.uid, rejectionReason.trim() || null);
       
       if (!result.success) {
         throw new Error(result.error || 'Failed to reject cancellation');
       }
 
+      // Close modal
+      setShowRejectCancellationModal(false);
+      setSelectedBooking(null);
+      setRejectionReason('');
+
       // Refresh reservations
       await fetchReservations();
-      alert('Cancellation rejected successfully.');
+      setSuccessMessage('Cancellation rejected successfully.');
+      setTimeout(() => setSuccessMessage(''), 5000);
     } catch (error) {
       console.error('Error rejecting cancellation:', error);
       setError(error.message || 'Failed to reject cancellation. Please try again.');
-      alert(`Failed to reject cancellation: ${error.message || 'Please try again.'}`);
     } finally {
       setProcessing(null);
     }
@@ -546,8 +607,17 @@ const Reservation = () => {
 
         {/* Error Message */}
         {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
+            <FaExclamationTriangle className="text-red-600 flex-shrink-0" />
             <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
+
+        {/* Success Message */}
+        {successMessage && (
+          <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
+            <FaCheckCircle className="text-green-600 flex-shrink-0" />
+            <p className="text-sm text-green-700">{successMessage}</p>
           </div>
         )}
 
@@ -718,24 +788,15 @@ const Reservation = () => {
                     {booking.status === 'pending_approval' && (
                       <div className="flex gap-3 pt-4 border-t border-gray-200">
                         <button
-                          onClick={() => handleApproveBooking(booking.id)}
+                          onClick={() => handleApproveBookingClick(booking.id)}
                           disabled={processing === booking.id}
                           className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
-                          {processing === booking.id ? (
-                            <>
-                              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                              Processing...
-                            </>
-                          ) : (
-                            <>
-                              <FaCheck className="w-4 h-4" />
-                              Approve
-                            </>
-                          )}
+                          <FaCheck className="w-4 h-4" />
+                          Approve
                         </button>
                         <button
-                          onClick={() => handleRejectBooking(booking.id)}
+                          onClick={() => handleRejectBookingClick(booking.id)}
                           disabled={processing === booking.id}
                           className="flex-1 px-4 py-2.5 border-2 border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
@@ -748,24 +809,15 @@ const Reservation = () => {
                     {booking.status === 'pending_cancellation' && (
                       <div className="flex gap-3 pt-4 border-t border-gray-200">
                         <button
-                          onClick={() => handleApproveCancellation(booking.id)}
+                          onClick={() => handleApproveCancellationClick(booking.id)}
                           disabled={processing === booking.id}
                           className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
-                          {processing === booking.id ? (
-                            <>
-                              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                              Processing...
-                            </>
-                          ) : (
-                            <>
-                              <FaCheck className="w-4 h-4" />
-                              Approve Cancellation
-                            </>
-                          )}
+                          <FaCheck className="w-4 h-4" />
+                          Approve Cancellation
                         </button>
                         <button
-                          onClick={() => handleRejectCancellation(booking.id)}
+                          onClick={() => handleRejectCancellationClick(booking.id)}
                           disabled={processing === booking.id}
                           className="flex-1 px-4 py-2.5 border-2 border-orange-300 text-orange-600 rounded-lg hover:bg-orange-50 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
@@ -781,6 +833,460 @@ const Reservation = () => {
           </div>
         )}
       </div>
+
+      {/* Approve Booking Modal */}
+      <AnimatePresence>
+        {showApproveBookingModal && selectedBooking && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (!processing) {
+                  setShowApproveBookingModal(false);
+                  setSelectedBooking(null);
+                }
+              }}
+              className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
+                      <FaCheckCircle className="w-6 h-6 text-green-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900">Approve Booking</h3>
+                      <p className="text-xs text-gray-600">Confirm booking approval</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (!processing) {
+                        setShowApproveBookingModal(false);
+                        setSelectedBooking(null);
+                      }
+                    }}
+                    disabled={processing}
+                    className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <FaTimes className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                  <p className="text-sm text-gray-700 mb-2">
+                    <span className="font-semibold">Listing:</span> {selectedBooking.listing?.title || selectedBooking.listingTitle || 'N/A'}
+                  </p>
+                  {selectedBooking.checkIn && selectedBooking.checkOut && (
+                    <p className="text-sm text-gray-700">
+                      <span className="font-semibold">Dates:</span> {formatDate(selectedBooking.checkIn)} - {formatDate(selectedBooking.checkOut)}
+                    </p>
+                  )}
+                  <p className="text-sm text-gray-700 mt-2">
+                    <span className="font-semibold">Total:</span> ₱{(selectedBooking.total || selectedBooking.totalAmount || 0).toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                  <p className="text-xs text-blue-800 flex items-start gap-2">
+                    <FaInfoCircle className="text-blue-600 mt-0.5 flex-shrink-0" />
+                    <span>Approving this booking will send confirmation emails to the guest and update the booking status to "Confirmed".</span>
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      if (!processing) {
+                        setShowApproveBookingModal(false);
+                        setSelectedBooking(null);
+                      }
+                    }}
+                    disabled={processing}
+                    className="flex-1 px-4 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleApproveBooking}
+                    disabled={processing === selectedBooking.id}
+                    className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {processing === selectedBooking.id ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <FaCheck className="w-4 h-4" />
+                        Approve Booking
+                      </>
+                    )}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Reject Booking Modal */}
+      <AnimatePresence>
+        {showRejectBookingModal && selectedBooking && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (!processing) {
+                  setShowRejectBookingModal(false);
+                  setSelectedBooking(null);
+                  setRejectionReason('');
+                }
+              }}
+              className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                      <FaBan className="w-6 h-6 text-red-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900">Reject Booking</h3>
+                      <p className="text-xs text-gray-600">Provide rejection reason (optional)</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (!processing) {
+                        setShowRejectBookingModal(false);
+                        setSelectedBooking(null);
+                        setRejectionReason('');
+                      }
+                    }}
+                    disabled={processing}
+                    className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <FaTimes className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                  <p className="text-sm text-gray-700 mb-2">
+                    <span className="font-semibold">Listing:</span> {selectedBooking.listing?.title || selectedBooking.listingTitle || 'N/A'}
+                  </p>
+                  {selectedBooking.checkIn && selectedBooking.checkOut && (
+                    <p className="text-sm text-gray-700">
+                      <span className="font-semibold">Dates:</span> {formatDate(selectedBooking.checkIn)} - {formatDate(selectedBooking.checkOut)}
+                    </p>
+                  )}
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Rejection Reason (Optional)
+                  </label>
+                  <textarea
+                    value={rejectionReason}
+                    onChange={(e) => setRejectionReason(e.target.value)}
+                    rows="4"
+                    placeholder="Enter reason for rejecting this booking..."
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 text-sm resize-none"
+                    disabled={processing}
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      if (!processing) {
+                        setShowRejectBookingModal(false);
+                        setSelectedBooking(null);
+                        setRejectionReason('');
+                      }
+                    }}
+                    disabled={processing}
+                    className="flex-1 px-4 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleRejectBooking}
+                    disabled={processing === selectedBooking.id}
+                    className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {processing === selectedBooking.id ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <FaBan className="w-4 h-4" />
+                        Reject Booking
+                      </>
+                    )}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Approve Cancellation Modal */}
+      <AnimatePresence>
+        {showApproveCancellationModal && selectedBooking && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (!processing) {
+                  setShowApproveCancellationModal(false);
+                  setSelectedBooking(null);
+                }
+              }}
+              className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
+                      <FaCheckCircle className="w-6 h-6 text-green-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900">Approve Cancellation</h3>
+                      <p className="text-xs text-gray-600">Confirm cancellation approval</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (!processing) {
+                        setShowApproveCancellationModal(false);
+                        setSelectedBooking(null);
+                      }
+                    }}
+                    disabled={processing}
+                    className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <FaTimes className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                  <p className="text-sm text-gray-700 mb-2">
+                    <span className="font-semibold">Listing:</span> {selectedBooking.listing?.title || selectedBooking.listingTitle || 'N/A'}
+                  </p>
+                  {selectedBooking.checkIn && selectedBooking.checkOut && (
+                    <p className="text-sm text-gray-700">
+                      <span className="font-semibold">Dates:</span> {formatDate(selectedBooking.checkIn)} - {formatDate(selectedBooking.checkOut)}
+                    </p>
+                  )}
+                  {selectedBooking.cancellationReason && (
+                    <div className="mt-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                      <p className="text-xs font-semibold text-orange-800 mb-1">Cancellation Reason:</p>
+                      <p className="text-sm text-orange-700">{selectedBooking.cancellationReason}</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                  <p className="text-xs text-blue-800 flex items-start gap-2">
+                    <FaInfoCircle className="text-blue-600 mt-0.5 flex-shrink-0" />
+                    <span>Approving this cancellation will send cancellation emails to the guest and update the booking status to "Cancelled".</span>
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      if (!processing) {
+                        setShowApproveCancellationModal(false);
+                        setSelectedBooking(null);
+                      }
+                    }}
+                    disabled={processing}
+                    className="flex-1 px-4 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleApproveCancellation}
+                    disabled={processing === selectedBooking.id}
+                    className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {processing === selectedBooking.id ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <FaCheck className="w-4 h-4" />
+                        Approve Cancellation
+                      </>
+                    )}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Reject Cancellation Modal */}
+      <AnimatePresence>
+        {showRejectCancellationModal && selectedBooking && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (!processing) {
+                  setShowRejectCancellationModal(false);
+                  setSelectedBooking(null);
+                  setRejectionReason('');
+                }
+              }}
+              className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center">
+                      <FaTimesCircle className="w-6 h-6 text-orange-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900">Reject Cancellation</h3>
+                      <p className="text-xs text-gray-600">Provide rejection reason (optional)</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (!processing) {
+                        setShowRejectCancellationModal(false);
+                        setSelectedBooking(null);
+                        setRejectionReason('');
+                      }
+                    }}
+                    disabled={processing}
+                    className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <FaTimes className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                  <p className="text-sm text-gray-700 mb-2">
+                    <span className="font-semibold">Listing:</span> {selectedBooking.listing?.title || selectedBooking.listingTitle || 'N/A'}
+                  </p>
+                  {selectedBooking.checkIn && selectedBooking.checkOut && (
+                    <p className="text-sm text-gray-700">
+                      <span className="font-semibold">Dates:</span> {formatDate(selectedBooking.checkIn)} - {formatDate(selectedBooking.checkOut)}
+                    </p>
+                  )}
+                  {selectedBooking.cancellationReason && (
+                    <div className="mt-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                      <p className="text-xs font-semibold text-orange-800 mb-1">Guest's Cancellation Reason:</p>
+                      <p className="text-sm text-orange-700">{selectedBooking.cancellationReason}</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Rejection Reason (Optional)
+                  </label>
+                  <textarea
+                    value={rejectionReason}
+                    onChange={(e) => setRejectionReason(e.target.value)}
+                    rows="4"
+                    placeholder="Enter reason for rejecting this cancellation request..."
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm resize-none"
+                    disabled={processing}
+                  />
+                </div>
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+                  <p className="text-xs text-yellow-800 flex items-start gap-2">
+                    <FaExclamationTriangle className="text-yellow-600 mt-0.5 flex-shrink-0" />
+                    <span>Rejecting this cancellation will restore the booking to its previous status. The guest's cancellation request will be declined.</span>
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      if (!processing) {
+                        setShowRejectCancellationModal(false);
+                        setSelectedBooking(null);
+                        setRejectionReason('');
+                      }
+                    }}
+                    disabled={processing}
+                    className="flex-1 px-4 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleRejectCancellation}
+                    disabled={processing === selectedBooking.id}
+                    className="flex-1 px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {processing === selectedBooking.id ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <FaTimesCircle className="w-4 h-4" />
+                        Reject Cancellation
+                      </>
+                    )}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

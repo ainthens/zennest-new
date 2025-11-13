@@ -1504,7 +1504,462 @@ export const toggleFavorite = async (userId, listingId) => {
   }
 };
 
-// Points & Rewards
+// Vouchers & Discounts System
+// Generate a unique voucher code
+const generateVoucherCode = () => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let code = '';
+  for (let i = 0; i < 8; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+};
+
+// Check if voucher code is unique
+const isVoucherCodeUnique = async (code) => {
+  try {
+    const vouchersRef = collection(db, 'vouchers');
+    const q = query(vouchersRef, where('code', '==', code));
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.empty;
+  } catch (error) {
+    console.error('Error checking voucher code uniqueness:', error);
+    return false;
+  }
+};
+
+// Create a new voucher (Host only)
+export const createVoucher = async (hostId, voucherData) => {
+  try {
+    if (!hostId) {
+      throw new Error('Host ID is required');
+    }
+
+    // Validate discount percentage (max 50%)
+    const discountPercentage = parseFloat(voucherData.discountPercentage || 0);
+    if (discountPercentage <= 0 || discountPercentage > 50) {
+      throw new Error('Discount percentage must be between 1% and 50%');
+    }
+
+    // Generate unique voucher code
+    let code;
+    let isUnique = false;
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    while (!isUnique && attempts < maxAttempts) {
+      code = generateVoucherCode();
+      isUnique = await isVoucherCodeUnique(code);
+      attempts++;
+    }
+
+    if (!isUnique) {
+      throw new Error('Failed to generate unique voucher code. Please try again.');
+    }
+
+    // Create voucher document
+    const vouchersRef = collection(db, 'vouchers');
+    const voucherDoc = {
+      code,
+      hostId,
+      discountPercentage,
+      isClaimed: false,
+      isUsed: false,
+      claimedBy: null,
+      claimedAt: null,
+      usedAt: null,
+      expirationDate: voucherData.expirationDate ? Timestamp.fromDate(new Date(voucherData.expirationDate)) : null,
+      listingId: voucherData.listingId || null, // Optional: restrict to specific listing
+      usageLimit: voucherData.usageLimit || 1, // Number of times voucher can be used
+      usageCount: 0, // Track how many times it's been used
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    const voucherRef = await addDoc(vouchersRef, voucherDoc);
+    console.log('✅ Voucher created successfully:', code);
+    return { success: true, id: voucherRef.id, code, ...voucherDoc };
+  } catch (error) {
+    console.error('Error creating voucher:', error);
+    throw error;
+  }
+};
+
+// Get all vouchers (filtered by host or guest)
+export const getVouchers = async (userId, userRole = 'guest') => {
+  try {
+    const vouchersRef = collection(db, 'vouchers');
+    let q;
+
+    if (userRole === 'host') {
+      // Host sees all vouchers they created
+      q = query(
+        vouchersRef,
+        where('hostId', '==', userId),
+        orderBy('createdAt', 'desc')
+      );
+    } else {
+      // Guest sees available vouchers (not claimed) or their claimed vouchers
+      q = query(
+        vouchersRef,
+        orderBy('createdAt', 'desc')
+      );
+    }
+
+    const querySnapshot = await getDocs(q);
+    const vouchers = querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : doc.data().createdAt,
+      expirationDate: doc.data().expirationDate?.toDate ? doc.data().expirationDate.toDate() : doc.data().expirationDate,
+      claimedAt: doc.data().claimedAt?.toDate ? doc.data().claimedAt.toDate() : doc.data().claimedAt,
+      usedAt: doc.data().usedAt?.toDate ? doc.data().usedAt.toDate() : doc.data().usedAt
+    }));
+
+    if (userRole === 'guest') {
+      // Filter for guests: show available vouchers or vouchers claimed by this guest
+      return {
+        success: true,
+        data: vouchers.filter(voucher => 
+          (!voucher.isClaimed && !voucher.isUsed && (voucher.usageCount < (voucher.usageLimit || 1))) ||
+          (voucher.claimedBy === userId)
+        )
+      };
+    }
+
+    return { success: true, data: vouchers };
+  } catch (error) {
+    console.error('Error fetching vouchers:', error);
+    return { success: false, error: error.message, data: [] };
+  }
+};
+
+// Get available vouchers for guests (not claimed, not expired, not used)
+export const getAvailableVouchers = async () => {
+  try {
+    const vouchersRef = collection(db, 'vouchers');
+    const q = query(
+      vouchersRef,
+      where('isClaimed', '==', false),
+      where('isUsed', '==', false),
+      orderBy('createdAt', 'desc')
+    );
+
+    const querySnapshot = await getDocs(q);
+    const now = new Date();
+    const vouchers = querySnapshot.docs
+      .map(doc => {
+        const data = doc.data();
+        const expirationDate = data.expirationDate?.toDate ? data.expirationDate.toDate() : data.expirationDate;
+        return {
+          id: doc.id,
+          ...data,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt,
+          expirationDate,
+          claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : data.claimedAt,
+          usedAt: data.usedAt?.toDate ? data.usedAt.toDate() : data.usedAt
+        };
+      })
+      .filter(voucher => {
+        // Filter out expired vouchers
+        if (voucher.expirationDate && voucher.expirationDate < now) {
+          return false;
+        }
+        // Filter out vouchers that have reached usage limit
+        if (voucher.usageCount >= (voucher.usageLimit || 1)) {
+          return false;
+        }
+        return true;
+      });
+
+    return { success: true, data: vouchers };
+  } catch (error) {
+    console.error('Error fetching available vouchers:', error);
+    // If query fails (e.g., missing index), try without filters
+    try {
+      const vouchersRef = collection(db, 'vouchers');
+      const allVouchers = await getDocs(vouchersRef);
+      const now = new Date();
+      const vouchers = allVouchers.docs
+        .map(doc => {
+          const data = doc.data();
+          const expirationDate = data.expirationDate?.toDate ? data.expirationDate.toDate() : data.expirationDate;
+          return {
+            id: doc.id,
+            ...data,
+            createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt,
+            expirationDate,
+            claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : data.claimedAt,
+            usedAt: data.usedAt?.toDate ? data.usedAt.toDate() : data.usedAt
+          };
+        })
+        .filter(voucher => {
+          if (voucher.isClaimed || voucher.isUsed) return false;
+          if (voucher.expirationDate && voucher.expirationDate < now) return false;
+          if (voucher.usageCount >= (voucher.usageLimit || 1)) return false;
+          return true;
+        });
+
+      return { success: true, data: vouchers };
+    } catch (fallbackError) {
+      console.error('Error in fallback voucher fetch:', fallbackError);
+      return { success: false, error: fallbackError.message, data: [] };
+    }
+  }
+};
+
+// Get claimed vouchers for a guest
+export const getClaimedVouchers = async (guestId) => {
+  try {
+    const vouchersRef = collection(db, 'vouchers');
+    const q = query(
+      vouchersRef,
+      where('claimedBy', '==', guestId),
+      orderBy('claimedAt', 'desc')
+    );
+
+    const querySnapshot = await getDocs(q);
+    const now = new Date();
+    const vouchers = querySnapshot.docs
+      .map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt,
+          expirationDate: data.expirationDate?.toDate ? data.expirationDate.toDate() : data.expirationDate,
+          claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : data.claimedAt,
+          usedAt: data.usedAt?.toDate ? data.usedAt.toDate() : data.usedAt
+        };
+      })
+      .filter(voucher => {
+        // Filter out expired vouchers
+        if (voucher.expirationDate && voucher.expirationDate < now) {
+          return false;
+        }
+        return true;
+      });
+
+    return { success: true, data: vouchers };
+  } catch (error) {
+    console.error('Error fetching claimed vouchers:', error);
+    // Fallback: get all vouchers and filter client-side
+    try {
+      const vouchersRef = collection(db, 'vouchers');
+      const allVouchers = await getDocs(vouchersRef);
+      const now = new Date();
+      const vouchers = allVouchers.docs
+        .map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data,
+            createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt,
+            expirationDate: data.expirationDate?.toDate ? data.expirationDate.toDate() : data.expirationDate,
+            claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : data.claimedAt,
+            usedAt: data.usedAt?.toDate ? data.usedAt.toDate() : data.usedAt
+          };
+        })
+        .filter(voucher => voucher.claimedBy === guestId);
+
+      return { success: true, data: vouchers };
+    } catch (fallbackError) {
+      console.error('Error in fallback claimed vouchers fetch:', fallbackError);
+      return { success: false, error: fallbackError.message, data: [] };
+    }
+  }
+};
+
+// Claim a voucher (Guest)
+export const claimVoucher = async (voucherId, guestId) => {
+  try {
+    if (!voucherId || !guestId) {
+      throw new Error('Voucher ID and Guest ID are required');
+    }
+
+    const voucherRef = doc(db, 'vouchers', voucherId);
+    const voucherSnap = await getDoc(voucherRef);
+
+    if (!voucherSnap.exists()) {
+      throw new Error('Voucher not found');
+    }
+
+    const voucherData = voucherSnap.data();
+
+    // Check if voucher is already claimed
+    if (voucherData.isClaimed) {
+      throw new Error('Voucher is already claimed');
+    }
+
+    // Check if voucher is already used
+    if (voucherData.isUsed) {
+      throw new Error('Voucher has already been used');
+    }
+
+    // Check if voucher has reached usage limit
+    if (voucherData.usageCount >= (voucherData.usageLimit || 1)) {
+      throw new Error('Voucher has reached its usage limit');
+    }
+
+    // Check expiration
+    if (voucherData.expirationDate) {
+      const expirationDate = voucherData.expirationDate?.toDate ? voucherData.expirationDate.toDate() : new Date(voucherData.expirationDate);
+      if (expirationDate < new Date()) {
+        throw new Error('Voucher has expired');
+      }
+    }
+
+    // Check if guest has already claimed this voucher
+    if (voucherData.claimedBy === guestId) {
+      throw new Error('You have already claimed this voucher');
+    }
+
+    // Claim the voucher
+    await updateDoc(voucherRef, {
+      isClaimed: true,
+      claimedBy: guestId,
+      claimedAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+
+    console.log('✅ Voucher claimed successfully:', voucherData.code);
+    return { success: true, voucher: { id: voucherSnap.id, ...voucherData } };
+  } catch (error) {
+    console.error('Error claiming voucher:', error);
+    throw error;
+  }
+};
+
+// Apply a voucher to a booking (validate and calculate discount)
+export const applyVoucher = async (voucherId, guestId, bookingAmount) => {
+  try {
+    if (!voucherId || !guestId) {
+      throw new Error('Voucher ID and Guest ID are required');
+    }
+
+    const voucherRef = doc(db, 'vouchers', voucherId);
+    const voucherSnap = await getDoc(voucherRef);
+
+    if (!voucherSnap.exists()) {
+      throw new Error('Voucher not found');
+    }
+
+    const voucherData = voucherSnap.data();
+
+    // Verify voucher belongs to the guest
+    if (voucherData.claimedBy !== guestId) {
+      throw new Error('Voucher not claimed by this guest');
+    }
+
+    // Check if voucher is already used
+    if (voucherData.isUsed) {
+      throw new Error('Voucher has already been used');
+    }
+
+    // Check if voucher has reached usage limit
+    if (voucherData.usageCount >= (voucherData.usageLimit || 1)) {
+      throw new Error('Voucher has reached its usage limit');
+    }
+
+    // Check expiration
+    if (voucherData.expirationDate) {
+      const expirationDate = voucherData.expirationDate?.toDate ? voucherData.expirationDate.toDate() : new Date(voucherData.expirationDate);
+      if (expirationDate < new Date()) {
+        throw new Error('Voucher has expired');
+      }
+    }
+
+    // Calculate discount
+    const discountPercentage = parseFloat(voucherData.discountPercentage || 0);
+    const discountAmount = (bookingAmount * discountPercentage) / 100;
+    const finalAmount = bookingAmount - discountAmount;
+
+    return {
+      success: true,
+      voucher: { id: voucherSnap.id, ...voucherData },
+      discountPercentage,
+      discountAmount: parseFloat(discountAmount.toFixed(2)),
+      finalAmount: parseFloat(finalAmount.toFixed(2))
+    };
+  } catch (error) {
+    console.error('Error applying voucher:', error);
+    throw error;
+  }
+};
+
+// Mark voucher as used after successful booking
+export const markVoucherUsed = async (voucherId, bookingId) => {
+  try {
+    if (!voucherId) {
+      throw new Error('Voucher ID is required');
+    }
+
+    const voucherRef = doc(db, 'vouchers', voucherId);
+    const voucherSnap = await getDoc(voucherRef);
+
+    if (!voucherSnap.exists()) {
+      throw new Error('Voucher not found');
+    }
+
+    const voucherData = voucherSnap.data();
+    const newUsageCount = (voucherData.usageCount || 0) + 1;
+    const usageLimit = voucherData.usageLimit || 1;
+
+    // Update voucher
+    await updateDoc(voucherRef, {
+      isUsed: newUsageCount >= usageLimit,
+      usageCount: newUsageCount,
+      usedAt: serverTimestamp(),
+      bookingId: bookingId || null,
+      updatedAt: serverTimestamp()
+    });
+
+    console.log('✅ Voucher marked as used:', voucherData.code);
+    return { success: true };
+  } catch (error) {
+    console.error('Error marking voucher as used:', error);
+    throw error;
+  }
+};
+
+// Delete a voucher (Host only)
+export const deleteVoucher = async (voucherId, hostId) => {
+  try {
+    if (!voucherId || !hostId) {
+      throw new Error('Voucher ID and Host ID are required');
+    }
+
+    const voucherRef = doc(db, 'vouchers', voucherId);
+    const voucherSnap = await getDoc(voucherRef);
+
+    if (!voucherSnap.exists()) {
+      throw new Error('Voucher not found');
+    }
+
+    const voucherData = voucherSnap.data();
+
+    // Verify voucher belongs to the host
+    if (voucherData.hostId !== hostId) {
+      throw new Error('Unauthorized: This voucher does not belong to you');
+    }
+
+    // Don't allow deletion if voucher is already used
+    if (voucherData.isUsed) {
+      throw new Error('Cannot delete a voucher that has been used');
+    }
+
+    // Delete voucher
+    await deleteDoc(voucherRef);
+
+    console.log('✅ Voucher deleted successfully:', voucherData.code);
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting voucher:', error);
+    throw error;
+  }
+};
+
+// Points & Rewards (Legacy - keeping for backward compatibility)
 export const updateHostPoints = async (userId, points, reason) => {
   try {
     const hostRef = doc(db, 'hosts', userId);

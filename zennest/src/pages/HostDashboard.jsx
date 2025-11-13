@@ -22,7 +22,8 @@ import {
   FaChevronDown,
   FaChevronUp,
   FaUser,
-  FaCalendarCheck
+  FaCalendarCheck,
+  FaTicketAlt
 } from 'react-icons/fa';
 
 const HostDashboard = () => {
@@ -49,6 +50,7 @@ const HostDashboard = () => {
     else if (path.includes('/messages')) setActiveTab('messages');
     else if (path.includes('/payments')) setActiveTab('payments');
     else if (path.includes('/rewards')) setActiveTab('rewards');
+    else if (path.includes('/vouchers')) setActiveTab('vouchers');
     else if (path.includes('/settings')) setActiveTab('settings');
     else setActiveTab('dashboard');
   }, [location.pathname]);
@@ -131,6 +133,7 @@ const HostDashboard = () => {
   const financialMenuItems = [
     { id: 'payments', label: 'Payments', icon: FaWallet, path: '/host/payments' },
     { id: 'rewards', label: 'Points & Rewards', icon: FaGift, path: '/host/rewards' },
+    { id: 'vouchers', label: 'Vouchers', icon: FaTicketAlt, path: '/host/vouchers' },
   ];
 
   const settingsMenuItems = [

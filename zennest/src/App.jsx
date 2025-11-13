@@ -46,6 +46,8 @@ import UserBookings from "./pages/UserBookings";
 import BookingDetails from "./pages/BookingDetails";
 import UserWallet from "./pages/UserWallet";
 import UserPoints from "./pages/UserPoints";
+import GuestVouchers from "./pages/GuestVouchers";
+import HostVouchers from "./pages/HostVouchers";
 import Chat from "./pages/Chat";
 import PaymentProcessing from "./pages/PaymentProcessing";
 import PayPalReturn from "./pages/PayPalReturn";
@@ -362,6 +364,16 @@ const AppContent = () => {
             }
           />
           <Route
+            path="/vouchers"
+            element={
+              <RouteErrorBoundary>
+                <RequireGuestAuth>
+                  <GuestVouchers />
+                </RequireGuestAuth>
+              </RouteErrorBoundary>
+            }
+          />
+          <Route
             path="/messages"
             element={
               <RouteErrorBoundary>
@@ -423,6 +435,7 @@ const AppContent = () => {
             <Route path="messages" element={<HostMessages />} />
             <Route path="payments" element={<HostPaymentsReceiving />} />
             <Route path="rewards" element={<HostRewards />} />
+            <Route path="vouchers" element={<HostVouchers />} />
             <Route path="settings" element={<HostSettings />} />
           </Route>
           <Route 

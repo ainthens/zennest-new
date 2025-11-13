@@ -43,14 +43,11 @@ import {
   FaFacebook,
   FaTwitter,
   FaWhatsapp,
-  FaEnvelope as FaGmail,
   FaLink,
-  FaGithub,
-  FaFacebookMessenger,
   FaInstagram,
-  FaTiktok,
   FaCalendarAlt,
-  FaCalendarCheck
+  FaCalendarCheck,
+  FaCheck
 } from 'react-icons/fa';
 
 // Fix Leaflet default icon issue
@@ -80,6 +77,7 @@ const ListingDetails = () => {
   const [nights, setNights] = useState(0);
   const [bounceKey, setBounceKey] = useState(0);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   // New state for calendar
   const [showCalendar, setShowCalendar] = useState(false);
@@ -403,8 +401,9 @@ const ListingDetails = () => {
     }
   };
 
-  const handleShare = async () => {
+  const handleShare = () => {
     setShowShareModal(true);
+    setLinkCopied(false);
   };
 
   const shareToFacebook = () => {
@@ -413,62 +412,66 @@ const ListingDetails = () => {
     setShowShareModal(false);
   };
 
-  const shareToTwitter = () => {
+  const shareToInstagram = async () => {
+    // Instagram doesn't support direct URL sharing from web
+    // Copy link to clipboard for user to paste in Instagram
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setLinkCopied(true);
+      setTimeout(() => {
+        setLinkCopied(false);
+      }, 2000);
+    } catch (error) {
+      console.error('Failed to copy link:', error);
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = window.location.href;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      setLinkCopied(true);
+      setTimeout(() => {
+        setLinkCopied(false);
+      }, 2000);
+    }
+  };
+
+  const shareToWhatsApp = () => {
+    const url = encodeURIComponent(window.location.href);
+    const text = encodeURIComponent(`${listing?.title || 'Check out this listing!'} - ${window.location.href}`);
+    window.open(`https://wa.me/?text=${text}`, '_blank');
+    setShowShareModal(false);
+  };
+
+  const shareToX = () => {
     const url = encodeURIComponent(window.location.href);
     const text = encodeURIComponent(listing?.title || 'Check out this listing!');
     window.open(`https://twitter.com/intent/tweet?url=${url}&text=${text}`, '_blank');
     setShowShareModal(false);
   };
 
-  const shareToWhatsApp = () => {
-    const url = encodeURIComponent(window.location.href);
-    const text = encodeURIComponent(`${listing?.title || 'Check out this listing!'} - ${window.location.href}`);
-    window.open(`wa.me/?text=${text}`, '_blank');
-    setShowShareModal(false);
-  };
-
-  const shareToGmail = () => {
-    const subject = encodeURIComponent(listing?.title || 'Check out this listing!');
-    const body = encodeURIComponent(`I found this listing and thought you might be interested:\n\n${listing?.title}\n${listing?.description}\n\n${window.location.href}`);
-    window.open(`https://mail.google.com/mail/?view=cm&fs=1&su=${subject}&body=${body}`, '_blank');
-    setShowShareModal(false);
-  };
-
-  const shareToGithub = () => {
-    const url = encodeURIComponent(window.location.href);
-    const title = encodeURIComponent(listing?.title || 'Check out this listing!');
-    // GitHub doesn't have a direct share URL, so we open GitHub with the URL in clipboard
-    navigator.clipboard.writeText(window.location.href);
-    alert('Link copied! You can now share it on GitHub.');
-    setShowShareModal(false);
-  };
-
-  const shareToMessenger = () => {
-    const url = encodeURIComponent(window.location.href);
-    window.open(`fb-messenger://share/?link=${url}`, '_blank');
-    setShowShareModal(false);
-  };
-
-  const shareToInstagram = () => {
-    // Instagram doesn't support direct URL sharing from web
-    // Copy link and inform user
-    navigator.clipboard.writeText(window.location.href);
-    alert('Link copied! Open Instagram app and paste the link in your story or post.');
-    setShowShareModal(false);
-  };
-
-  const shareToTikTok = () => {
-    // TikTok doesn't support direct URL sharing from web
-    // Copy link and inform user
-    navigator.clipboard.writeText(window.location.href);
-    alert('Link copied! Open TikTok app and paste the link in your video description or bio.');
-    setShowShareModal(false);
-  };
-
-  const copyLink = () => {
-    navigator.clipboard.writeText(window.location.href);
-    alert('Link copied to clipboard!');
-    setShowShareModal(false);
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setLinkCopied(true);
+      setTimeout(() => {
+        setLinkCopied(false);
+      }, 2000);
+    } catch (error) {
+      console.error('Failed to copy link:', error);
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = window.location.href;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      setLinkCopied(true);
+      setTimeout(() => {
+        setLinkCopied(false);
+      }, 2000);
+    }
   };
 
   const calculateTotal = () => {
@@ -2578,7 +2581,7 @@ const ListingDetails = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
+              className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
               onClick={() => setShowShareModal(false)}
             >
               <motion.div
@@ -2586,20 +2589,21 @@ const ListingDetails = () => {
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.9, opacity: 0 }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto"
+                className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-center justify-between mb-6 sticky top-0 bg-white pb-4 border-b border-gray-200">
-                  <h3 className="text-2xl font-bold text-gray-900">Share this listing</h3>
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-xl font-bold text-gray-900">Share Listing</h3>
                   <button
                     onClick={() => setShowShareModal(false)}
                     className="text-gray-400 hover:text-gray-600 transition-colors"
                   >
-                    <FaTimes className="w-6 h-6" />
+                    <FaTimes className="w-5 h-5" />
                   </button>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 mb-6">
+                  {/* Facebook */}
                   <button
                     onClick={shareToFacebook}
                     className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-blue-500 hover:bg-blue-50 transition-colors group"
@@ -2610,36 +2614,7 @@ const ListingDetails = () => {
                     <span className="font-medium text-gray-700 group-hover:text-blue-600 text-sm">Facebook</span>
                   </button>
 
-                  <button
-                    onClick={shareToMessenger}
-                    className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-blue-400 hover:bg-blue-50 transition-colors group"
-                  >
-                    <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center group-hover:bg-blue-400 transition-colors">
-                      <FaFacebookMessenger className="w-6 h-6 text-blue-500 group-hover:text-white transition-colors" />
-                    </div>
-                    <span className="font-medium text-gray-700 group-hover:text-blue-500 text-sm">Messenger</span>
-                  </button>
-
-                  <button
-                    onClick={shareToTwitter}
-                    className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-sky-500 hover:bg-sky-50 transition-colors group"
-                  >
-                    <div className="w-12 h-12 rounded-full bg-sky-100 flex items-center justify-center group-hover:bg-sky-500 transition-colors">
-                      <FaTwitter className="w-6 h-6 text-sky-600 group-hover:text-white transition-colors" />
-                    </div>
-                    <span className="font-medium text-gray-700 group-hover:text-sky-600 text-sm">Twitter</span>
-                  </button>
-
-                  <button
-                    onClick={shareToWhatsApp}
-                    className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 transition-colors group"
-                  >
-                    <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center group-hover:bg-green-500 transition-colors">
-                      <FaWhatsapp className="w-6 h-6 text-green-600 group-hover:text-white transition-colors" />
-                    </div>
-                    <span className="font-medium text-gray-700 group-hover:text-green-600 text-sm">WhatsApp</span>
-                  </button>
-
+                  {/* Instagram */}
                   <button
                     onClick={shareToInstagram}
                     className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-pink-500 hover:bg-pink-50 transition-colors group"
@@ -2650,43 +2625,49 @@ const ListingDetails = () => {
                     <span className="font-medium text-gray-700 group-hover:text-pink-600 text-sm">Instagram</span>
                   </button>
 
+                  {/* WhatsApp */}
                   <button
-                    onClick={shareToTikTok}
+                    onClick={shareToWhatsApp}
+                    className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 transition-colors group"
+                  >
+                    <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center group-hover:bg-green-500 transition-colors">
+                      <FaWhatsapp className="w-6 h-6 text-green-600 group-hover:text-white transition-colors" />
+                    </div>
+                    <span className="font-medium text-gray-700 group-hover:text-green-600 text-sm">WhatsApp</span>
+                  </button>
+
+                  {/* X (Twitter) */}
+                  <button
+                    onClick={shareToX}
                     className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-gray-900 hover:bg-gray-50 transition-colors group"
                   >
                     <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center group-hover:bg-gray-900 transition-colors">
-                      <FaTiktok className="w-6 h-6 text-gray-900 group-hover:text-white transition-colors" />
+                      <FaTwitter className="w-6 h-6 text-gray-700 group-hover:text-white transition-colors" />
                     </div>
-                    <span className="font-medium text-gray-700 group-hover:text-gray-900 text-sm">TikTok</span>
-                  </button>
-
-                  <button
-                    onClick={shareToGmail}
-                    className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-red-500 hover:bg-red-50 transition-colors group"
-                  >
-                    <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center group-hover:bg-red-500 transition-colors">
-                      <FaGmail className="w-6 h-6 text-red-600 group-hover:text-white transition-colors" />
-                    </div>
-                    <span className="font-medium text-gray-700 group-hover:text-red-600 text-sm">Gmail</span>
-                  </button>
-
-                  <button
-                    onClick={shareToGithub}
-                    className="flex flex-col items-center gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-gray-800 hover:bg-gray-50 transition-colors group"
-                  >
-                    <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center group-hover:bg-gray-800 transition-colors">
-                      <FaGithub className="w-6 h-6 text-gray-800 group-hover:text-white transition-colors" />
-                    </div>
-                    <span className="font-medium text-gray-700 group-hover:text-gray-800 text-sm">GitHub</span>
+                    <span className="font-medium text-gray-700 group-hover:text-gray-900 text-sm">X</span>
                   </button>
                 </div>
 
+                {/* Copy Link Button */}
                 <button
                   onClick={copyLink}
-                  className="w-full flex items-center justify-center gap-3 p-4 rounded-xl bg-gray-100 hover:bg-gray-200 transition-colors"
+                  className={`w-full flex items-center justify-center gap-3 p-4 rounded-xl transition-colors font-semibold ${
+                    linkCopied
+                      ? 'bg-green-100 text-green-700 border-2 border-green-300'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  }`}
                 >
-                  <FaLink className="w-5 h-5 text-gray-700" />
-                  <span className="font-semibold text-gray-700">Copy Link</span>
+                  {linkCopied ? (
+                    <>
+                      <FaCheck className="w-5 h-5" />
+                      <span>Link Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <FaLink className="w-5 h-5" />
+                      <span>Copy Link</span>
+                    </>
+                  )}
                 </button>
               </motion.div>
             </motion.div>
