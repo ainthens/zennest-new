@@ -8,6 +8,7 @@ import { getHostProfile, getOrCreateConversation, updateHostPoints } from '../se
 import useAuth from '../hooks/useAuth';
 import SettingsHeader from '../components/SettingsHeader';
 import Loading from '../components/Loading';
+import CancellationReasonModal from '../components/CancellationReasonModal';
 import {
   FaCalendarCheck,
   FaMapMarkerAlt,
@@ -19,7 +20,6 @@ import {
   FaCalendarAlt,
   FaPhone,
   FaEnvelope,
-  FaExclamationTriangle,
   FaBan,
   FaChevronLeft,
   FaUser,
@@ -41,9 +41,8 @@ const BookingDetails = () => {
   const [host, setHost] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [cancelBookingId, setCancelBookingId] = useState(null);
-  const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [showCancellationReasonModal, setShowCancellationReasonModal] = useState(false);
   const [canReview, setCanReview] = useState(false);
   const [hasReviewed, setHasReviewed] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
@@ -168,6 +167,9 @@ const BookingDetails = () => {
 
   const getBookingStatus = (booking) => {
     if (booking.status === 'cancelled') return 'cancelled';
+    if (booking.status === 'pending_approval') return 'pending_approval';
+    if (booking.status === 'pending_cancellation') return 'pending_cancellation';
+    if (booking.status === 'rejected') return 'rejected';
     
     if (!booking.checkIn || !booking.checkOut) {
       if (booking.status === 'confirmed' || booking.status === 'completed') return 'active';
@@ -387,6 +389,24 @@ const BookingDetails = () => {
           color: 'bg-red-100 text-red-700 border-red-300',
           icon: FaTimesCircle 
         };
+      case 'pending_approval':
+        return { 
+          label: 'Awaiting Host Approval', 
+          color: 'bg-yellow-100 text-yellow-700 border-yellow-300',
+          icon: FaClock 
+        };
+      case 'pending_cancellation':
+        return { 
+          label: 'Cancellation Pending', 
+          color: 'bg-orange-100 text-orange-700 border-orange-300',
+          icon: FaClock 
+        };
+      case 'rejected':
+        return { 
+          label: 'Rejected', 
+          color: 'bg-red-100 text-red-700 border-red-300',
+          icon: FaTimesCircle 
+        };
       default:
         return { 
           label: 'Unknown', 
@@ -398,40 +418,59 @@ const BookingDetails = () => {
 
   const canCancelBooking = (booking) => {
     const status = getBookingStatus(booking);
-    return status === 'upcoming' || status === 'active' || 
-           booking.status === 'pending' || booking.status === 'reserved';
+    // Can cancel upcoming, active, confirmed, pending_approval bookings
+    // Cannot cancel already cancelled, past, pending_cancellation, or rejected bookings
+    return (status === 'upcoming' || status === 'active' || 
+           booking.status === 'confirmed' || booking.status === 'pending_approval') &&
+           booking.status !== 'pending_cancellation' &&
+           booking.status !== 'cancelled' &&
+           booking.status !== 'rejected';
   };
 
   const handleCancelClick = () => {
-    setCancelBookingId(booking.id);
-    setShowCancelModal(true);
+    setShowCancellationReasonModal(true);
   };
 
-  const confirmCancelBooking = async () => {
-    if (!cancelBookingId) return;
+  const handleCancellationReasonSubmit = async (cancellationReason) => {
+    if (!booking?.id) return;
 
     try {
       setCancelling(true);
-      const bookingRef = doc(db, 'bookings', cancelBookingId);
+      const bookingRef = doc(db, 'bookings', booking.id);
+      const bookingSnap = await getDoc(bookingRef);
       
+      if (!bookingSnap.exists()) {
+        alert('Booking not found');
+        setShowCancellationReasonModal(false);
+        return;
+      }
+
+      const bookingData = bookingSnap.data();
+      const currentStatus = bookingData.status;
+      
+      // Update booking status to pending_cancellation
       await updateDoc(bookingRef, {
-        status: 'cancelled',
-        cancelledAt: serverTimestamp(),
+        status: 'pending_cancellation',
+        previousStatus: currentStatus, // Store previous status for potential rejection
+        cancellationReason: cancellationReason,
+        cancellationRequestedAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
 
-      console.log('✅ Booking cancelled successfully');
+      console.log('✅ Cancellation request submitted successfully');
+      
+      // Don't send cancellation emails yet - wait for host approval
+      // Emails will be sent after host approves the cancellation
       
       // Refresh booking details
       await fetchBookingDetails();
       
       // Close modal and show success
-      setShowCancelModal(false);
-      setCancelBookingId(null);
-      alert('Booking cancelled successfully!');
+      setShowCancellationReasonModal(false);
+      alert('Cancellation request submitted! Waiting for host approval.');
     } catch (error) {
-      console.error('❌ Error cancelling booking:', error);
-      alert(`Failed to cancel booking: ${error.message || 'Please try again.'}`);
+      console.error('❌ Error submitting cancellation request:', error);
+      alert(`Failed to submit cancellation request: ${error.message || 'Please try again.'}`);
     } finally {
       setCancelling(false);
     }
@@ -1072,77 +1111,13 @@ const BookingDetails = () => {
         </div>
       </div>
 
-      {/* Cancel Booking Confirmation Modal */}
-      <AnimatePresence>
-        {showCancelModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => !cancelling && setShowCancelModal(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-4 mb-6">
-                <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-                  <FaExclamationTriangle className="w-6 h-6 text-red-600" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-gray-900">Cancel Booking</h3>
-                  <p className="text-sm text-gray-600">Are you sure you want to cancel this booking?</p>
-                </div>
-              </div>
-
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-                <p className="text-sm text-red-800 font-medium mb-2">⚠️ Important Information:</p>
-                <ul className="text-sm text-red-700 space-y-1 list-disc list-inside">
-                  <li>This action cannot be undone</li>
-                  <li>Your booking will be marked as cancelled</li>
-                  <li>Refund policies apply based on cancellation terms</li>
-                  <li>The host will be notified of this cancellation</li>
-                </ul>
-              </div>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    setShowCancelModal(false);
-                    setCancelBookingId(null);
-                  }}
-                  disabled={cancelling}
-                  className="flex-1 px-4 py-3 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Keep Booking
-                </button>
-                <button
-                  onClick={confirmCancelBooking}
-                  disabled={cancelling}
-                  className="flex-1 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {cancelling ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Cancelling...
-                    </>
-                  ) : (
-                    <>
-                      <FaBan className="w-4 h-4" />
-                      Yes, Cancel Booking
-                    </>
-                  )}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Cancellation Reason Modal */}
+      <CancellationReasonModal
+        isOpen={showCancellationReasonModal}
+        onClose={() => setShowCancellationReasonModal(false)}
+        onSubmit={handleCancellationReasonSubmit}
+        isSubmitting={cancelling}
+      />
     </>
   );
 };

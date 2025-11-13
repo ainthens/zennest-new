@@ -3,7 +3,7 @@
 // Key fixes:
 // - Removed manual PayPal SDK injection (no double-loading)
 // - Use PayPalScriptProvider only
-// - Default to PHP currency (per request). Auto-fallback to USD only if SDK fails with PHP.
+// - Always use PHP (Philippine Peso) currency - no fallback to other currencies
 // - Tolerant Client ID resolution (ENV or window global)
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -43,8 +43,7 @@ import {
  * PayPalButtonsWrapper
  * - Renders PayPalButtons
  * - Watches PayPal script loading state via usePayPalScriptReducer
- * - If script load fails (loadingStatus === 'REJECTED') and current currency is PHP,
- *   automatically switch to USD once via dispatch(resetOptions) (no full page reload).
+ * - Always uses PHP (Philippine Peso) currency - shows error if PHP is not supported
  */
 const PayPalButtonsWrapper = ({
   createOrder,
@@ -62,24 +61,25 @@ const PayPalButtonsWrapper = ({
   useEffect(() => {
     if (isRejected) {
       console.error('❌ PayPal SDK script loading REJECTED for options:', options);
-
-      // If we tried PHP and it failed, attempt USD as a fallback (once)
-      if ((options.currency === 'PHP' || currency === 'PHP') && typeof onCurrencyFallback === 'function') {
-        console.warn('🔄 Attempting fallback to USD due to PHP SDK load failure');
-        onCurrencyFallback('USD');
-
-        // Reset options to use USD and ensure only "buttons" is requested
+      
+      // Always use PHP (Philippine Peso) - show error if PHP is not supported
+      // Don't fallback to USD/EUR as user specifically wants PHP
+      if (options.currency !== 'PHP' && currency !== 'PHP') {
+        console.warn('⚠️ PayPal currency is not PHP. Attempting to use PHP.');
+        // Try to reset to PHP
         dispatch({
           type: 'resetOptions',
           value: {
             ...options,
-            currency: 'USD',
+            currency: 'PHP',
             components: 'buttons'
           }
         });
+      } else {
+        console.error('❌ PayPal SDK failed to load with PHP currency. Please check your PayPal account settings to ensure PHP is supported.');
       }
     }
-  }, [isRejected, options, dispatch, currency, onCurrencyFallback]);
+  }, [isRejected, options, dispatch, currency]);
 
   if (isPending) {
     return (
@@ -92,7 +92,8 @@ const PayPalButtonsWrapper = ({
   if (isRejected) {
     return (
       <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-        Failed to load PayPal. Please try again or use another payment method.
+        <p className="font-semibold mb-2">Failed to load PayPal with PHP (Philippine Peso) currency.</p>
+        <p className="text-xs">Please ensure your PayPal account supports PHP transactions, or try using a different payment method (Wallet).</p>
       </div>
     );
   }
@@ -195,16 +196,10 @@ const PaymentProcessing = () => {
   const globalClientId = typeof window !== 'undefined' && window.PAYPAL_CLIENT_ID ? window.PAYPAL_CLIENT_ID : null;
   const paypalClientId = (envClientId && envClientId.trim()) || (globalClientId && globalClientId.trim()) || '';
 
-  // Currency preference:
-  // Default to PHP per user request, but allow session override
-  const [paypalCurrency, setPaypalCurrency] = useState(() => {
-    const saved = sessionStorage.getItem('paypalCurrency');
-    if (saved) return saved;
-    return 'PHP'; // default requested by user
-  });
+  // Currency: Always use PHP (Philippine Peso) as requested
+  const PAYPAL_CURRENCY = 'PHP'; // Always use PHP (Philippine Peso)
 
   const [paypalError, setPaypalError] = useState(null);
-  const [currencySwitched, setCurrencySwitched] = useState(false);
   const [forceReinitKey, setForceReinitKey] = useState(0); // bump to force reinit of PayPalButtons
 
   // Validate client id on mount
@@ -220,8 +215,10 @@ const PaymentProcessing = () => {
       console.warn('⚠️ PayPal Client ID seems unusually short:', paypalClientId);
     }
 
-    console.log('✅ PayPal Client ID available. Using currency:', paypalCurrency);
-  }, [paypalClientId, paypalCurrency]);
+    // Clear any previous currency settings to ensure PHP is used
+    sessionStorage.removeItem('paypalCurrency');
+    console.log('✅ PayPal Client ID available. Using currency: PHP (Philippine Peso)');
+  }, [paypalClientId]);
 
   // Fetch initial listing, wallet, calculate totals
   useEffect(() => {
@@ -461,7 +458,7 @@ const PaymentProcessing = () => {
       listingId: listing.id,
       listingTitle: listing.title,
       listingCategory: listing.category,
-      status: paymentTiming === 'now' ? 'pending' : 'reserved',
+      status: 'pending_approval', // All bookings start as pending approval
       paymentStatus: paymentTiming === 'now' ? 'pending' : 'scheduled',
       paymentMethod: paymentMethod === 'creditcard' ? 'paypal' : paymentMethod,
       paymentTiming: paymentTiming,
@@ -508,7 +505,7 @@ const PaymentProcessing = () => {
     const bookingRef = doc(db, 'bookings', bookingId);
     await updateDoc(bookingRef, {
       paymentStatus: 'completed',
-      status: 'confirmed',
+      status: 'pending_approval', // Status remains pending_approval until host approves
       updatedAt: serverTimestamp()
     });
   };
@@ -544,11 +541,11 @@ const PaymentProcessing = () => {
 
       await updateDoc(bookingRef, {
         paymentStatus: 'completed',
-        status: 'confirmed',
+        status: 'pending_approval', // Status remains pending_approval until host approves
         paypalPaymentId: paymentId,
         paypalOrderId: orderId || null,
         paidAmount: paidAmount || finalTotal,
-        paidCurrency: currency || paypalCurrency,
+        paidCurrency: 'PHP', // Always use PHP (Philippine Peso)
         paidAt: serverTimestamp(),
         payerEmail: payer?.email_address || paypalEmail || null,
         payerName: payer?.name?.given_name && payer?.name?.surname
@@ -573,7 +570,7 @@ const PaymentProcessing = () => {
         userId: user.uid,
         type: 'payment',
         amount: paidAmount || finalTotal,
-        currency: currency || paypalCurrency,
+        currency: 'PHP', // Always use PHP (Philippine Peso)
         status: 'completed',
         description: `Booking payment for ${listing.title}`,
         paymentMethod: paymentMethod === 'creditcard' ? 'creditcard' : 'paypal',
@@ -586,19 +583,15 @@ const PaymentProcessing = () => {
         completedAt: serverTimestamp()
       });
 
-      const hostAmount = totalAmount - promoDiscount;
-      try {
-        await transferPaymentToHost(listing.hostId, hostAmount, bookingIdToUse, listing.title);
-      } catch (transferError) {
-        console.error('Error transferring payment to host:', transferError);
-      }
-
-      // non-blocking operations
-      sendBookingConfirmationEmails(bookingIdToUse).catch(e => console.error('Email error', e));
+      // Don't transfer payment until booking is approved
+      // Payment transfer will happen after host approves the booking
+      
+      // non-blocking operations - send message to host only (no confirmation email yet)
       sendMessageToHost(bookingIdToUse).catch(e => console.error('Message error', e));
 
       // Clear sessionStorage
       sessionStorage.removeItem('pendingPaypalBookingId');
+      sessionStorage.removeItem('paypalCurrency'); // Ensure PHP is always used
 
       // Small wait
       await new Promise(res => setTimeout(res, 300));
@@ -606,7 +599,7 @@ const PaymentProcessing = () => {
       navigate('/bookings', {
         state: {
           success: true,
-          message: 'Booking confirmed! Payment processed successfully.',
+          message: 'Booking request submitted! Payment processed successfully. Waiting for host approval.',
           bookingId: bookingIdToUse
         }
       });
@@ -746,13 +739,9 @@ const PaymentProcessing = () => {
 
       if (paymentTiming === 'now' && paymentMethod === 'wallet') {
         await completeWalletPayment(bookingId);
-        const hostAmount = totalAmount - promoDiscount;
-        try {
-          await transferPaymentToHost(listing.hostId, hostAmount, bookingId, listing.title);
-        } catch (err) {
-          console.error('Error transfer to host', err);
-        }
-        await sendBookingConfirmationEmails(bookingId);
+        // Don't transfer payment until booking is approved
+        // Payment transfer will happen after host approves the booking
+        // Don't send confirmation email until host approves
       }
 
       if (appliedPromoCode && appliedPromoCode.id) {
@@ -770,7 +759,7 @@ const PaymentProcessing = () => {
       navigate('/bookings', {
         state: {
           success: true,
-          message: paymentTiming === 'now' ? 'Booking confirmed! Payment processed successfully.' : 'Booking reserved! Payment will be processed on the scheduled date.'
+          message: paymentTiming === 'now' ? 'Booking request submitted! Payment processed successfully. Waiting for host approval.' : 'Booking request submitted! Payment will be processed on the scheduled date. Waiting for host approval.'
         }
       });
     } catch (err) {
@@ -808,14 +797,14 @@ const PaymentProcessing = () => {
         }
       }
 
-      // Use the same currency as the loaded PayPal SDK (paypalCurrency)
+      // Always use PHP (Philippine Peso) currency
       const value = Number(finalTotal).toFixed(2);
       return await actions.order.create({
         intent: 'CAPTURE',
         purchase_units: [
           {
             amount: {
-              currency_code: paypalCurrency,
+              currency_code: 'PHP', // Always use PHP (Philippine Peso)
               value
             }
           }
@@ -835,9 +824,9 @@ const PaymentProcessing = () => {
       const pu = details?.purchase_units?.[0];
       const cap = pu?.payments?.captures?.[0];
       const amount = cap?.amount?.value || pu?.amount?.value;
-      const currency = cap?.amount?.currency_code || pu?.amount?.currency_code || paypalCurrency;
+      const currency = 'PHP'; // Always use PHP (Philippine Peso) regardless of what PayPal returns
 
-      console.log('✅ PayPal capture details:', { orderId: details?.id, captureId: cap?.id, status: cap?.status, amount, currency });
+      console.log('✅ PayPal capture details:', { orderId: details?.id, captureId: cap?.id, status: cap?.status, amount, currency: 'PHP (Philippine Peso)' });
 
       await handlePayPalSuccess(details?.id, {
         orderId: details?.id,
@@ -868,18 +857,13 @@ const PaymentProcessing = () => {
     }
   };
 
-  // Persist currency fallback so amounts/currency stay consistent with what was paid
+  // Handle currency issues - always use PHP, don't fallback to other currencies
   const handleCurrencyFallback = useCallback((newCurrency) => {
-    try {
-      console.warn('PayPal currency fallback:', paypalCurrency, '->', newCurrency);
-      sessionStorage.setItem('paypalCurrency', newCurrency);
-      setPaypalCurrency(newCurrency);
-      setCurrencySwitched(true);
-      setForceReinitKey((k) => k + 1);
-    } catch (e) {
-      console.error('Currency fallback error:', e);
-    }
-  }, [paypalCurrency]);
+    // Don't allow currency fallback - always use PHP
+    console.warn('⚠️ Currency fallback requested but PHP (Philippine Peso) is required. Keeping PHP.');
+    // Force reinit with PHP
+    setForceReinitKey((k) => k + 1);
+  }, []);
 
   if (loading) {
     return (
@@ -926,7 +910,16 @@ const PaymentProcessing = () => {
   ];
 
   return (
-    <>
+    <PayPalScriptProvider
+      options={{
+        clientId: paypalClientId,
+        currency: 'PHP', // Always use PHP (Philippine Peso)
+        components: 'buttons',
+        intent: 'capture',
+        locale: 'en_PH' // Set locale to Philippines for better PHP support
+      }}
+      key={`paypal-php-${forceReinitKey}`} // Force reinit if needed
+    >
       <SettingsHeader />
       <div className="min-h-screen bg-slate-50 pt-20 pb-12 relative z-0">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-0">
@@ -1167,6 +1160,31 @@ const PaymentProcessing = () => {
 
                   {messageToHost.trim() && (<div className="bg-slate-50 rounded-lg p-4 border border-gray-200"><h3 className="font-semibold text-gray-900 mb-2 text-sm">Message to Host</h3><p className="text-xs text-gray-700 whitespace-pre-wrap">{messageToHost}</p></div>)}
 
+                  {/* PayPal Buttons - Show when PayPal/Credit Card is selected and payment timing is "now" */}
+                  {currentStep === 4 && paymentTiming === 'now' && (paymentMethod === 'paypal' || paymentMethod === 'creditcard') && (
+                    <div className="bg-slate-50 rounded-lg p-4 border border-gray-200">
+                      <h3 className="font-semibold text-gray-900 mb-3 text-sm">Complete Payment</h3>
+                      {paypalError && (
+                        <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                          <p className="text-xs text-red-700">{paypalError}</p>
+                        </div>
+                      )}
+                      <PayPalButtonsWrapper
+                        createOrder={createPayPalOrder}
+                        onApprove={onApprovePayPalOrder}
+                        onCancel={onCancelPayPalOrder}
+                        onError={(err) => {
+                          console.error('PayPal error:', err);
+                          setPaypalError(err.message || 'Payment failed. Please try again.');
+                        }}
+                        currency="PHP" // Always use PHP (Philippine Peso)
+                        forceReinitKey={forceReinitKey}
+                        onCurrencyFallback={handleCurrencyFallback}
+                        style={{ layout: 'vertical' }}
+                      />
+                    </div>
+                  )}
+
                   <div className="flex items-start gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
                     <FaShieldAlt className="text-emerald-600 mt-0.5 flex-shrink-0 w-4 h-4" />
                     <div>
@@ -1189,19 +1207,23 @@ const PaymentProcessing = () => {
                   Continue <FaChevronRight className="w-3 h-3" />
                 </button>
               ) : (
-                <button
-                  onClick={handleCompleteBooking}
-                  disabled={processing || (paymentMethod === 'wallet' && walletBalance < finalTotal)}
-                  className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {processing ? 'Processing...' : 'Complete Booking'}
-                </button>
+                // Only show "Complete Booking" button if NOT using PayPal/Credit Card with "Pay Now"
+                // For PayPal/Credit Card with "Pay Now", the PayPal buttons handle the payment
+                !(paymentTiming === 'now' && (paymentMethod === 'paypal' || paymentMethod === 'creditcard')) && (
+                  <button
+                    onClick={handleCompleteBooking}
+                    disabled={processing || (paymentMethod === 'wallet' && walletBalance < finalTotal)}
+                    className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {processing ? 'Processing...' : 'Complete Booking'}
+                  </button>
+                )
               )}
             </div>
           </div>
         </div>
       </div>
-    </>
+    </PayPalScriptProvider>
   );
 };
 

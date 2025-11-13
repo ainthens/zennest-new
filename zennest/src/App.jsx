@@ -35,6 +35,7 @@ import HostCalendar from "./pages/HostCalendar";
 import HostPaymentsReceiving from "./pages/HostPaymentsReceiving";
 import HostSettings from "./pages/HostSettings";
 import HostRewards from "./pages/HostRewards";
+import Reservation from "./pages/Reservation";
 import HostRegistration from "./pages/HostRegistration";
 import HostOnboarding from "./pages/HostOnboarding";
 import HostEmailVerifyPage from "./pages/HostEmailVerifyPage";
@@ -417,6 +418,7 @@ const AppContent = () => {
             <Route path="listings" element={<HostListings />} />
             <Route path="listings/new" element={<HostListingForm />} />
             <Route path="listings/:id/edit" element={<HostListingForm />} />
+            <Route path="reservations" element={<Reservation />} />
             <Route path="calendar" element={<HostCalendar />} />
             <Route path="messages" element={<HostMessages />} />
             <Route path="payments" element={<HostPaymentsReceiving />} />

@@ -530,6 +530,172 @@ export const updateBookingStatus = async (bookingId, status, hostId = null) => {
   }
 };
 
+// Approve booking request
+export const approveBooking = async (bookingId, hostId) => {
+  try {
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await getDoc(bookingRef);
+    
+    if (!bookingSnap.exists()) {
+      throw new Error('Booking not found');
+    }
+    
+    const bookingData = bookingSnap.data();
+    
+    // Verify this booking belongs to the host
+    if (bookingData.hostId !== hostId) {
+      throw new Error('Unauthorized: This booking does not belong to you');
+    }
+    
+    // Check if booking is pending approval
+    if (bookingData.status !== 'pending_approval') {
+      throw new Error('Booking is not pending approval');
+    }
+    
+    // Update booking status to confirmed
+    await updateDoc(bookingRef, {
+      status: 'confirmed',
+      approvedAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+    
+    // Transfer payment to host if payment is completed
+    if (bookingData.paymentStatus === 'completed') {
+      try {
+        const hostAmount = (bookingData.subtotal || 0) - (bookingData.promoDiscount || 0);
+        if (hostAmount > 0) {
+          await transferPaymentToHost(hostId, hostAmount, bookingId, bookingData.listingTitle || 'Listing');
+        }
+      } catch (transferError) {
+        console.error('Error transferring payment to host:', transferError);
+        // Don't fail the approval if transfer fails
+      }
+    }
+    
+    // Return booking data for email sending
+    return { success: true, booking: { id: bookingId, ...bookingData } };
+  } catch (error) {
+    console.error('Error approving booking:', error);
+    throw error;
+  }
+};
+
+// Reject booking request
+export const rejectBooking = async (bookingId, hostId, rejectionReason = null) => {
+  try {
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await getDoc(bookingRef);
+    
+    if (!bookingSnap.exists()) {
+      throw new Error('Booking not found');
+    }
+    
+    const bookingData = bookingSnap.data();
+    
+    // Verify this booking belongs to the host
+    if (bookingData.hostId !== hostId) {
+      throw new Error('Unauthorized: This booking does not belong to you');
+    }
+    
+    // Check if booking is pending approval
+    if (bookingData.status !== 'pending_approval') {
+      throw new Error('Booking is not pending approval');
+    }
+    
+    // Update booking status to rejected
+    await updateDoc(bookingRef, {
+      status: 'rejected',
+      rejectedAt: serverTimestamp(),
+      rejectionReason: rejectionReason || null,
+      updatedAt: serverTimestamp()
+    });
+    
+    // TODO: Handle refund if payment was already processed
+    // For now, we'll leave the payment status as is
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error rejecting booking:', error);
+    throw error;
+  }
+};
+
+// Approve cancellation request
+export const approveCancellation = async (bookingId, hostId) => {
+  try {
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await getDoc(bookingRef);
+    
+    if (!bookingSnap.exists()) {
+      throw new Error('Booking not found');
+    }
+    
+    const bookingData = bookingSnap.data();
+    
+    // Verify this booking belongs to the host
+    if (bookingData.hostId !== hostId) {
+      throw new Error('Unauthorized: This booking does not belong to you');
+    }
+    
+    // Check if cancellation is pending approval
+    if (bookingData.status !== 'pending_cancellation') {
+      throw new Error('Cancellation is not pending approval');
+    }
+    
+    // Update booking status to cancelled
+    await updateDoc(bookingRef, {
+      status: 'cancelled',
+      cancelledAt: serverTimestamp(),
+      cancellationApprovedAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+    
+    // Return booking data for email sending
+    return { success: true, booking: { id: bookingId, ...bookingData } };
+  } catch (error) {
+    console.error('Error approving cancellation:', error);
+    throw error;
+  }
+};
+
+// Reject cancellation request
+export const rejectCancellation = async (bookingId, hostId, rejectionReason = null) => {
+  try {
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await getDoc(bookingRef);
+    
+    if (!bookingSnap.exists()) {
+      throw new Error('Booking not found');
+    }
+    
+    const bookingData = bookingSnap.data();
+    
+    // Verify this booking belongs to the host
+    if (bookingData.hostId !== hostId) {
+      throw new Error('Unauthorized: This booking does not belong to you');
+    }
+    
+    // Check if cancellation is pending approval
+    if (bookingData.status !== 'pending_cancellation') {
+      throw new Error('Cancellation is not pending approval');
+    }
+    
+    // Revert booking status back to confirmed (or previous status)
+    const previousStatus = bookingData.previousStatus || 'confirmed';
+    await updateDoc(bookingRef, {
+      status: previousStatus,
+      cancellationRejectedAt: serverTimestamp(),
+      cancellationRejectionReason: rejectionReason || null,
+      updatedAt: serverTimestamp()
+    });
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error rejecting cancellation:', error);
+    throw error;
+  }
+};
+
 // Messages & Conversations Management
 // Create or get a conversation between guest and host for a listing
 export const getOrCreateConversation = async (guestId, hostId, listingId, listingTitle) => {

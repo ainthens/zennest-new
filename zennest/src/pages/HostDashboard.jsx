@@ -21,7 +21,8 @@ import {
   FaTimes,
   FaChevronDown,
   FaChevronUp,
-  FaUser
+  FaUser,
+  FaCalendarCheck
 } from 'react-icons/fa';
 
 const HostDashboard = () => {
@@ -43,6 +44,7 @@ const HostDashboard = () => {
   useEffect(() => {
     const path = location.pathname;
     if (path.includes('/listings')) setActiveTab('listings');
+    else if (path.includes('/reservations')) setActiveTab('reservations');
     else if (path.includes('/calendar')) setActiveTab('calendar');
     else if (path.includes('/messages')) setActiveTab('messages');
     else if (path.includes('/payments')) setActiveTab('payments');
@@ -121,6 +123,7 @@ const HostDashboard = () => {
   const coreMenuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: FaChartLine, path: '/host/dashboard' },
     { id: 'listings', label: 'Listings', icon: FaList, path: '/host/listings' },
+    { id: 'reservations', label: 'Reservations', icon: FaCalendarCheck, path: '/host/reservations' },
     { id: 'calendar', label: 'Calendar', icon: FaCalendarAlt, path: '/host/calendar' },
     { id: 'messages', label: 'Messages', icon: FaEnvelope, path: '/host/messages' },
   ];
