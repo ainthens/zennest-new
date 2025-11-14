@@ -3,6 +3,20 @@
 // This endpoint handles secure PayPal payouts using server-side credentials
 
 export default async function handler(req, res) {
+  // Enable CORS
+  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+  );
+
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   // Only allow POST requests
   if (req.method !== 'POST') {
     return res.status(405).json({ 
@@ -27,7 +41,17 @@ export default async function handler(req, res) {
     }
 
     // Get request body
-    const { paypalEmail, amount, currency = 'PHP' } = req.body;
+    let requestBody;
+    try {
+      requestBody = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    } catch (e) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid JSON in request body'
+      });
+    }
+
+    const { paypalEmail, amount, currency = 'PHP' } = requestBody;
 
     // Validate inputs
     if (!paypalEmail || !amount || amount <= 0) {
@@ -70,10 +94,15 @@ export default async function handler(req, res) {
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      console.error('PayPal OAuth token error:', errorText);
+      console.error('PayPal OAuth token error:', {
+        status: tokenResponse.status,
+        statusText: tokenResponse.statusText,
+        error: errorText
+      });
       return res.status(500).json({
         success: false,
-        error: 'Failed to authenticate with PayPal'
+        error: `Failed to authenticate with PayPal: ${tokenResponse.status} ${tokenResponse.statusText}`,
+        details: errorText
       });
     }
 
@@ -122,11 +151,15 @@ export default async function handler(req, res) {
     const payoutResult = await payoutResponse.json();
 
     if (!payoutResponse.ok) {
-      console.error('PayPal Payout error:', payoutResult);
+      console.error('PayPal Payout error:', {
+        status: payoutResponse.status,
+        statusText: payoutResponse.statusText,
+        error: payoutResult
+      });
       return res.status(payoutResponse.status || 500).json({
         success: false,
-        error: payoutResult.message || payoutResult.name || 'Failed to process PayPal payout',
-        details: payoutResult.details || null
+        error: payoutResult.message || payoutResult.name || `Failed to process PayPal payout: ${payoutResponse.status}`,
+        details: payoutResult.details || payoutResult
       });
     }
 
@@ -151,10 +184,15 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('Error processing PayPal payout:', error);
+    console.error('Error processing PayPal payout:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
     return res.status(500).json({
       success: false,
-      error: error.message || 'Internal server error while processing payout'
+      error: error.message || 'Internal server error while processing payout',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 }

@@ -379,6 +379,38 @@ const HostPaymentsReceiving = () => {
       setCashOutHistory(history);
     } catch (error) {
       console.error('Error fetching cash out history:', error);
+      
+      // If index error, try fetching without orderBy as fallback
+      if (error.code === 'failed-precondition' || error.message?.includes('index')) {
+        console.warn('Index not found, fetching without orderBy as fallback');
+        try {
+          // Fallback: fetch without orderBy and sort client-side
+          const fallbackQuery = query(
+            collection(db, 'cashOuts'),
+            where('hostId', '==', user.uid)
+          );
+          const fallbackSnapshot = await getDocs(fallbackQuery);
+          const history = fallbackSnapshot.docs
+            .map(doc => ({
+              id: doc.id,
+              ...doc.data()
+            }))
+            .sort((a, b) => {
+              // Sort by createdAt descending (client-side)
+              const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+              const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+              return bTime - aTime;
+            });
+          setCashOutHistory(history);
+        } catch (fallbackError) {
+          console.error('Error in fallback cashout query:', fallbackError);
+          // Set empty array if both queries fail
+          setCashOutHistory([]);
+        }
+      } else {
+        // For other errors, just set empty array
+        setCashOutHistory([]);
+      }
     }
   };
 
@@ -423,15 +455,30 @@ const HostPaymentsReceiving = () => {
       setCashOutError('');
       setCashOutSuccess('');
 
-      // Process PayPal payout
-      const payoutResult = await processPayPalPayout(
-        paypalData.email,
-        amount,
-        'PHP'
-      );
+      console.log('🚀 Starting cashout process:', {
+        email: paypalData.email,
+        amount: amount,
+        currency: 'PHP'
+      });
 
-      if (!payoutResult.success) {
-        throw new Error(payoutResult.error || 'Failed to process payout');
+      // Process PayPal payout
+      let payoutResult;
+      try {
+        payoutResult = await processPayPalPayout(
+          paypalData.email,
+          amount,
+          'PHP'
+        );
+        console.log('✅ Payout API response:', payoutResult);
+      } catch (payoutError) {
+        console.error('❌ Payout API error:', payoutError);
+        throw new Error(payoutError.message || 'Failed to process payout with PayPal');
+      }
+
+      if (!payoutResult || !payoutResult.success) {
+        const errorMsg = payoutResult?.error || payoutResult?.message || 'Failed to process payout';
+        console.error('❌ Payout failed:', errorMsg);
+        throw new Error(errorMsg);
       }
 
       // Calculate remaining balance after cashout
@@ -500,13 +547,22 @@ const HostPaymentsReceiving = () => {
       setPaypalLoginData(null);
       setPendingCashOutAmount(null);
     } catch (error) {
-      console.error('Error processing cash out:', error);
-      setCashOutError(error.message || 'Failed to process cash out. Please try again.');
+      console.error('❌ Error processing cash out:', {
+        message: error.message,
+        stack: error.stack,
+        error: error
+      });
+      
+      const errorMessage = error.message || 'Failed to process cash out. Please try again.';
+      setCashOutError(errorMessage);
+      
       // Close PayPal login modal and show error in cashout modal
       setShowPayPalLoginModal(false);
       setShowCashOutModal(true);
       setPendingCashOutAmount(null);
-      setTimeout(() => setCashOutError(''), 5000);
+      
+      // Keep error visible longer for debugging
+      setTimeout(() => setCashOutError(''), 10000);
     } finally {
       setProcessingCashOut(false);
     }

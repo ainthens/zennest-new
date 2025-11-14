@@ -81,10 +81,25 @@ export const processPayPalPayout = async (paypalEmail, amount, currency = 'PHP')
       })
     });
 
-    const result = await response.json();
+    // Check if response is ok before parsing JSON
+    let result;
+    try {
+      result = await response.json();
+    } catch (parseError) {
+      console.error('Failed to parse response:', parseError);
+      const text = await response.text();
+      console.error('Response text:', text);
+      throw new Error(`Server error: ${response.status} ${response.statusText}`);
+    }
 
     if (!response.ok || !result.success) {
-      throw new Error(result.error || 'Failed to process payout');
+      console.error('PayPal Payout API Error:', {
+        status: response.status,
+        statusText: response.statusText,
+        error: result.error,
+        details: result.details
+      });
+      throw new Error(result.error || result.message || 'Failed to process payout');
     }
 
     console.log('✅ PayPal Payout Response:', {
