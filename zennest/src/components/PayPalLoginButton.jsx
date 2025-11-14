@@ -14,7 +14,7 @@ import { PayPalButtons, usePayPalScriptReducer } from '@paypal/react-paypal-js';
  */
 const PayPalLoginButton = ({ onSuccess, onError }) => {
   const [{ isPending, isResolved }] = usePayPalScriptReducer();
-
+z
   // Create a minimal order for authentication (₱0.01)
   // In production, this should be voided/refunded via backend
   const createOrder = (data, actions) => {

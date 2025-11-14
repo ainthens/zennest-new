@@ -76,7 +76,7 @@ export const processPayPalPayout = async (paypalEmail, amount, currency = 'PHP')
     
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(error.message || 'Failed to process payout');
+      throw new Error(error.message || 'Failed to process payout');z
     }
     
     const result = await response.json();
