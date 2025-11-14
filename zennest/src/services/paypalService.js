@@ -58,14 +58,21 @@ export const processPayPalPayout = async (paypalEmail, amount, currency = 'PHP')
       ]
     };
 
-    // TODO: Replace with actual backend API call
-    // Example backend endpoint call:
-    /*
-    const response = await fetch('/api/paypal/payouts', {
+    // Call backend API endpoint for secure PayPal payout processing
+    // The backend handles PayPal authentication and payout creation
+    const apiUrl = import.meta.env.VITE_API_URL || '/api/paypal/payout';
+    
+    console.log('💰 PayPal Payout Request:', {
+      paypalEmail,
+      amount,
+      currency,
+      apiUrl
+    });
+
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         paypalEmail,
@@ -73,76 +80,33 @@ export const processPayPalPayout = async (paypalEmail, amount, currency = 'PHP')
         currency
       })
     });
-    
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Failed to process payout');z
-    }
-    
-    const result = await response.json();
-    return result;
-    */
 
-    // TODO: Replace with actual backend API call to PayPal Payouts API
-    // For now, simulate PayPal Sandbox payout processing
-    // In production, this should call a backend endpoint that uses PayPal Payouts API
-    
-    console.log('💰 PayPal Payout Request (Sandbox):', {
-      paypalEmail,
-      amount,
-      currency,
-      payoutData
-    });
-    
-    // Simulate PayPal Sandbox payout API call
-    // In PayPal Sandbox, payouts are typically processed immediately for testing
-    // For production, you need to:
-    // 1. Create a backend API endpoint (e.g., POST /api/paypal/payouts)
-    // 2. Authenticate with PayPal using Client ID and Secret
-    // 3. Call PayPal Payouts API: POST https://api-m.sandbox.paypal.com/v1/payments/payouts
-    // 4. Return the payout batch ID and status
-    
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Generate payout batch ID (simulating PayPal response)
-    const payoutBatchId = payoutData.sender_batch_header.sender_batch_id;
-    const transactionId = `TXN-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Simulate successful payout submission
-    // In PayPal Sandbox, payouts are typically marked as SUCCESS immediately for testing
-    // In production, status would be PENDING initially and update to SUCCESS/FAILED later
-    const simulatedStatus = 'SUCCESS'; // In Sandbox, simulate immediate success
-    
-    console.log('✅ PayPal Payout Simulated Response:', {
-      payoutBatchId,
-      transactionId,
-      status: simulatedStatus,
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.error || 'Failed to process payout');
+    }
+
+    console.log('✅ PayPal Payout Response:', {
+      payoutBatchId: result.payoutBatchId,
+      status: result.status,
       amount,
       currency,
       paypalEmail
     });
-    
+
     return {
       success: true,
-      payoutBatchId: payoutBatchId,
-      status: simulatedStatus, // SUCCESS, PROCESSING, FAILED
-      amount: amount,
-      currency: currency,
-      paypalEmail: paypalEmail,
-      message: `Payout of ₱${amount.toFixed(2)} has been successfully sent to ${paypalEmail} via PayPal Sandbox.`,
-      // Additional PayPal response fields (would come from actual API)
-      batchStatus: 'SUCCESS',
-      transactionId: transactionId,
-      estimatedCompletionDate: new Date().toISOString(), // Immediate in Sandbox
-      // Simulated PayPal API response structure
-      links: [
-        {
-          href: `https://www.sandbox.paypal.com/batchstatus/${payoutBatchId}`,
-          rel: 'self',
-          method: 'GET'
-        }
-      ]
+      payoutBatchId: result.payoutBatchId,
+      status: result.status, // SUCCESS, PENDING, PROCESSING, FAILED
+      amount: result.amount || amount,
+      currency: result.currency || currency,
+      paypalEmail: result.paypalEmail || paypalEmail,
+      message: result.message || `Payout of ₱${amount.toFixed(2)} has been successfully sent to ${paypalEmail} via PayPal Sandbox.`,
+      batchStatus: result.batchStatus || result.status,
+      transactionId: result.transactionId,
+      estimatedCompletionDate: result.estimatedCompletionDate || new Date().toISOString(),
+      links: result.links || []
     };
   } catch (error) {
     console.error('Error processing PayPal payout:', error);

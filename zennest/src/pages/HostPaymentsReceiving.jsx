@@ -82,6 +82,8 @@ const HostPaymentsReceiving = () => {
   const [cashOutError, setCashOutError] = useState('');
   const [cashOutSuccess, setCashOutSuccess] = useState('');
   const [pendingCashOutAmount, setPendingCashOutAmount] = useState(null); // Store amount when showing PayPal login
+  const [showWithdrawalSuccessModal, setShowWithdrawalSuccessModal] = useState(false);
+  const [withdrawalDetails, setWithdrawalDetails] = useState(null); // Store withdrawal success details
 
   useEffect(() => {
     if (user) {
@@ -476,28 +478,34 @@ const HostPaymentsReceiving = () => {
       await fetchEarnings();
       await fetchCashOutHistory();
 
-      // Show success message based on payout status
-      if (payoutResult.status === 'SUCCESS') {
-        setCashOutSuccess(`Cash out of ₱${amount.toLocaleString()} has been successfully sent to ${paypalData.email}! Check your PayPal Sandbox account balance.`);
-      } else {
-        setCashOutSuccess('Cash out request submitted successfully! Processing typically takes a few moments in PayPal Sandbox.');
-      }
-      
-      // Close PayPal login modal and reopen cashout modal to show success message
+      // Store withdrawal details for success modal
+      setWithdrawalDetails({
+        amount: amount,
+        paypalEmail: paypalData.email,
+        payoutBatchId: payoutResult.payoutBatchId,
+        status: payoutResult.status,
+        transactionId: payoutResult.transactionId
+      });
+
+      // Close PayPal login modal and cashout modal
       setShowPayPalLoginModal(false);
-      setShowCashOutModal(true);
+      setShowCashOutModal(false);
       
-      // Clear form and close modal after 5 seconds
-      setTimeout(() => {
-        setShowCashOutModal(false);
-        setCashOutAmount('');
-        setCashOutSuccess('');
-        setPaypalLoginData(null);
-        setPendingCashOutAmount(null);
-      }, 5000);
+      // Show withdrawal success modal
+      setShowWithdrawalSuccessModal(true);
+      
+      // Clear form data
+      setCashOutAmount('');
+      setCashOutSuccess('');
+      setPaypalLoginData(null);
+      setPendingCashOutAmount(null);
     } catch (error) {
       console.error('Error processing cash out:', error);
       setCashOutError(error.message || 'Failed to process cash out. Please try again.');
+      // Close PayPal login modal and show error in cashout modal
+      setShowPayPalLoginModal(false);
+      setShowCashOutModal(true);
+      setPendingCashOutAmount(null);
       setTimeout(() => setCashOutError(''), 5000);
     } finally {
       setProcessingCashOut(false);
@@ -824,7 +832,6 @@ const HostPaymentsReceiving = () => {
                     onClick={() => {
                       setShowCashOutModal(false);
                       setCashOutAmount('');
-                      setSelectedPaymentMethod(null);
                       setCashOutError('');
                       setCashOutSuccess('');
                     }}
@@ -965,6 +972,99 @@ const HostPaymentsReceiving = () => {
                   </button>
                 </div>
               )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Withdrawal Successful Modal */}
+      <AnimatePresence>
+        {showWithdrawalSuccessModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setShowWithdrawalSuccessModal(false);
+                setWithdrawalDetails(null);
+              }
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-center mb-4">
+                <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center">
+                  <FaCheckCircle className="text-4xl text-emerald-600" />
+                </div>
+              </div>
+
+              <h2 className="text-2xl font-bold text-gray-900 text-center mb-2">
+                Withdrawal Successful
+              </h2>
+
+              <p className="text-gray-600 text-center mb-6">
+                Your earnings have been transferred to your PayPal Sandbox account.
+              </p>
+
+              {withdrawalDetails && (
+                <div className="bg-gray-50 rounded-lg p-4 mb-6 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Amount:</span>
+                    <span className="text-lg font-semibold text-gray-900">
+                      ₱{withdrawalDetails.amount.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">PayPal Email:</span>
+                    <span className="text-sm font-medium text-gray-900">
+                      {withdrawalDetails.paypalEmail}
+                    </span>
+                  </div>
+                  {withdrawalDetails.payoutBatchId && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Batch ID:</span>
+                      <span className="text-xs font-mono text-gray-600">
+                        {withdrawalDetails.payoutBatchId.substring(0, 20)}...
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Status:</span>
+                    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                      withdrawalDetails.status === 'SUCCESS' 
+                        ? 'bg-green-100 text-green-700' 
+                        : 'bg-blue-100 text-blue-700'
+                    }`}>
+                      {withdrawalDetails.status}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                <p className="text-sm text-blue-800 text-center">
+                  <strong>Note:</strong> Check your PayPal Sandbox account balance to confirm the transfer.
+                  Processing typically takes a few moments in PayPal Sandbox.
+                </p>
+              </div>
+
+              <button
+                onClick={() => {
+                  setShowWithdrawalSuccessModal(false);
+                  setWithdrawalDetails(null);
+                }}
+                className="w-full bg-emerald-600 text-white py-3 rounded-lg hover:bg-emerald-700 transition-colors font-medium flex items-center justify-center gap-2"
+              >
+                <FaCheckCircle />
+                Close
+              </button>
             </motion.div>
           </motion.div>
         )}

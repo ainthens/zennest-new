@@ -227,11 +227,6 @@ const HostMessages = () => {
       }
     });
 
-    // Scroll to bottom when new messages arrive
-    setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, 100);
-
     return () => {
       if (unsubscribeMessages) unsubscribeMessages();
       if (unsubscribeTyping) unsubscribeTyping();
