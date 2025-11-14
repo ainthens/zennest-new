@@ -538,19 +538,66 @@ const ListingDetails = () => {
     return { daysInMonth, startingDayOfWeek, year, month };
   };
 
+  // Helper function to format dates as local YYYY-MM-DD strings (avoids UTC timezone issues)
+  // Use this instead of toISOString() when formatting user-selected dates
+  const formatLocalDate = (d) => {
+    if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Helper function to normalize dates consistently
+  // CRITICAL: This function ensures dates are compared correctly regardless of timezone
+  const normalizeDateForComparison = (dateValue) => {
+    if (!dateValue) return null;
+    
+    let date;
+    
+    // Handle ISO date strings (YYYY-MM-DD format) - parse as local date to avoid timezone issues
+    if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+      // Parse manually to ensure it's treated as local date, not UTC
+      const [year, month, day] = dateValue.split('-').map(Number);
+      date = new Date(year, month - 1, day, 0, 0, 0, 0); // Creates date at midnight LOCAL time
+    } else if (dateValue instanceof Date) {
+      // If it's already a Date object, create a new one to avoid mutating the original
+      date = new Date(dateValue);
+      // If the date was created from an ISO string, it might be in UTC
+      // Check if it's a UTC date and convert to local
+      const year = date.getFullYear();
+      const month = date.getMonth();
+      const day = date.getDate();
+      // Recreate as local date to avoid timezone shifts
+      date = new Date(year, month, day, 0, 0, 0, 0);
+    } else {
+      // Try to parse as date string or number
+      date = new Date(dateValue);
+      // If parsing resulted in a valid date, normalize it
+      if (!isNaN(date.getTime())) {
+        const year = date.getFullYear();
+        const month = date.getMonth();
+        const day = date.getDate();
+        date = new Date(year, month, day, 0, 0, 0, 0);
+      }
+    }
+    
+    // Final validation
+    if (isNaN(date.getTime())) {
+      console.warn('⚠️ Invalid date value:', dateValue);
+      return null;
+    }
+    
+    return date;
+  };
+
   const isDateUnavailable = (date) => {
+    const normalizedDate = normalizeDateForComparison(date);
+    
     // Check host-marked unavailable dates
     if (unavailableDates && unavailableDates.length > 0) {
-      const normalizeDate = (d) => {
-        const normalized = new Date(d);
-        normalized.setHours(0, 0, 0, 0);
-        return normalized;
-      };
-      
-      const normalizedDate = normalizeDate(date);
-      
       const isHostUnavailable = unavailableDates.some(unavailableDate => {
-        const normalizedUnavailable = normalizeDate(unavailableDate);
+        const normalizedUnavailable = normalizeDateForComparison(unavailableDate);
         return normalizedUnavailable.getTime() === normalizedDate.getTime();
       });
       
@@ -559,16 +606,8 @@ const ListingDetails = () => {
     
     // Check booked dates
     if (bookedDates && bookedDates.length > 0) {
-      const normalizeDate = (d) => {
-        const normalized = new Date(d);
-        normalized.setHours(0, 0, 0, 0);
-        return normalized;
-      };
-      
-      const normalizedDate = normalizeDate(date);
-      
       return bookedDates.some(bookedDate => {
-        const normalizedBooked = normalizeDate(bookedDate);
+        const normalizedBooked = normalizeDateForComparison(bookedDate);
         return normalizedBooked.getTime() === normalizedDate.getTime();
       });
     }
@@ -577,36 +616,71 @@ const ListingDetails = () => {
   };
   
   // Check if any date in a range is unavailable
+  // Note: Check-out date is excluded (you check out on that day, so you don't sleep there that night)
   const hasUnavailableDatesInRange = (startDate, endDate) => {
     if (!startDate || !endDate) {
       console.log('📅 Missing start or end date');
       return false;
     }
     
-    // Convert string dates to Date objects if needed
-    const start = startDate instanceof Date ? new Date(startDate) : new Date(startDate);
-    const end = endDate instanceof Date ? new Date(endDate) : new Date(endDate);
-    start.setHours(0, 0, 0, 0);
-    end.setHours(0, 0, 0, 0);
+    const start = normalizeDateForComparison(startDate);
+    const end = normalizeDateForComparison(endDate);
     
-    console.log('📅 Checking range:', {
-      start: start.toISOString().split('T')[0],
-      end: end.toISOString().split('T')[0],
-      unavailableDates: unavailableDates.map(d => d.toISOString().split('T')[0]),
-      bookedDates: bookedDates.map(d => d.toISOString().split('T')[0])
-    });
+    // Validate dates
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      console.error('📅 Invalid date format:', { startDate, endDate });
+      return false;
+    }
     
-    // Check each day in the range
+    // Check-out date should be after check-in date
+    if (end <= start) {
+      console.log('📅 Check-out date must be after check-in date');
+      return false;
+    }
+    
+    // Check each day in the range (EXCLUDING check-out date)
+    // For example: check-in Nov 25, check-out Nov 27 means you stay Nov 25 and Nov 26
+    // So we only check Nov 25 (check-in) and Nov 26 (night before check-out)
+    const datesToCheck = [];
     const currentDate = new Date(start);
-    while (currentDate <= end) {
-      if (isDateUnavailable(new Date(currentDate))) {
-        console.log('❌ Found unavailable date in range:', currentDate.toISOString().split('T')[0]);
+    
+    while (currentDate < end) { // Use < instead of <= to exclude check-out date
+      const normalizedCurrent = normalizeDateForComparison(currentDate);
+      datesToCheck.push(normalizedCurrent.toISOString().split('T')[0]);
+      
+      if (isDateUnavailable(normalizedCurrent)) {
+        console.log('❌ Found unavailable date in range:', {
+          unavailableDate: normalizedCurrent.toISOString().split('T')[0],
+          checkIn: start.toISOString().split('T')[0],
+          checkOut: end.toISOString().split('T')[0],
+          datesChecked: datesToCheck,
+          unavailableDates: unavailableDates.map(d => {
+            const normalized = normalizeDateForComparison(d);
+            return normalized.toISOString().split('T')[0];
+          }),
+          bookedDates: bookedDates.map(d => {
+            const normalized = normalizeDateForComparison(d);
+            return normalized.toISOString().split('T')[0];
+          })
+        });
         return true;
       }
       currentDate.setDate(currentDate.getDate() + 1);
     }
     
-    console.log('✅ No unavailable dates in range');
+    console.log('✅ No unavailable dates in range:', {
+      checkIn: start.toISOString().split('T')[0],
+      checkOut: end.toISOString().split('T')[0],
+      datesChecked: datesToCheck,
+      unavailableDates: unavailableDates.map(d => {
+        const normalized = normalizeDateForComparison(d);
+        return normalized.toISOString().split('T')[0];
+      }),
+      bookedDates: bookedDates.map(d => {
+        const normalized = normalizeDateForComparison(d);
+        return normalized.toISOString().split('T')[0];
+      })
+    });
     return false;
   };
 
@@ -618,50 +692,81 @@ const ListingDetails = () => {
 
   const isDateInRange = (date) => {
     if (!selectedDates.start || !selectedDates.end) return false;
-    return date >= selectedDates.start && date <= selectedDates.end;
+    // Normalize all dates for accurate comparison
+    const normalizedDate = normalizeDateForComparison(date);
+    const normalizedStart = normalizeDateForComparison(selectedDates.start);
+    const normalizedEnd = normalizeDateForComparison(selectedDates.end);
+    
+    if (!normalizedDate || !normalizedStart || !normalizedEnd) return false;
+    
+    // Check if date is between start and end (inclusive)
+    return normalizedDate.getTime() >= normalizedStart.getTime() && 
+           normalizedDate.getTime() <= normalizedEnd.getTime();
   };
 
   const isDateInHoverRange = (date) => {
     if (!selectedDates.start || !hoverDate || selectedDates.end) return false;
-    const start = selectedDates.start;
-    const end = hoverDate;
-    return date >= Math.min(start, end) && date <= Math.max(start, end);
+    // Normalize all dates for accurate comparison
+    const normalizedDate = normalizeDateForComparison(date);
+    const normalizedStart = normalizeDateForComparison(selectedDates.start);
+    const normalizedEnd = normalizeDateForComparison(hoverDate);
+    
+    if (!normalizedDate || !normalizedStart || !normalizedEnd) return false;
+    
+    const startTime = normalizedStart.getTime();
+    const endTime = normalizedEnd.getTime();
+    const dateTime = normalizedDate.getTime();
+    
+    return dateTime >= Math.min(startTime, endTime) && 
+           dateTime <= Math.max(startTime, endTime);
   };
 
   const handleDateClick = (date) => {
     if (isDateUnavailable(date) || isDateInPast(date)) return;
 
+    // Normalize the clicked date to ensure consistent storage
+    const normalizedClickedDate = normalizeDateForComparison(date);
+    if (!normalizedClickedDate) {
+      console.error('Invalid date clicked:', date);
+      return;
+    }
+
     if (calendarMode === 'checkIn' || !selectedDates.start) {
-      setSelectedDates({ start: date, end: null });
-      setCheckIn(date.toISOString().split('T')[0]);
+      // Set check-in date (normalized)
+      setSelectedDates({ start: normalizedClickedDate, end: null });
+      setCheckIn(formatLocalDate(normalizedClickedDate));
       setCalendarMode('checkOut');
       setCheckOut('');
     } else if (calendarMode === 'checkOut') {
-      if (date < selectedDates.start) {
-        setSelectedDates({ start: date, end: null });
-        setCheckIn(date.toISOString().split('T')[0]);
+      // Normalize the start date for comparison
+      const normalizedStart = normalizeDateForComparison(selectedDates.start);
+      if (!normalizedStart) {
+        console.error('Invalid start date:', selectedDates.start);
+        return;
+      }
+      
+      // If clicked date is before start date, make it the new start date
+      if (normalizedClickedDate.getTime() < normalizedStart.getTime()) {
+        setSelectedDates({ start: normalizedClickedDate, end: null });
+        setCheckIn(formatLocalDate(normalizedClickedDate));
         setCheckOut('');
       } else {
-        // Normalize dates for comparison (ignore time)
-        const startDate = new Date(selectedDates.start);
-        startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(date);
-        endDate.setHours(0, 0, 0, 0);
-        
         // Check if check-in and check-out are the same date (same day)
-        if (startDate.getTime() === endDate.getTime()) {
+        if (normalizedClickedDate.getTime() === normalizedStart.getTime()) {
           alert('Check-out date must be at least 1 day after check-in date. Please select a different check-out date.');
           return;
         }
         
         // Check if any unavailable dates are in the range
-        if (hasUnavailableDatesInRange(selectedDates.start, date)) {
+        // This only checks dates you'll actually stay (excludes check-out date)
+        if (hasUnavailableDatesInRange(normalizedStart, normalizedClickedDate)) {
           alert('Selected range contains unavailable dates. Please select a different range.');
           return;
         }
         
-        setSelectedDates({ ...selectedDates, end: date });
-        setCheckOut(date.toISOString().split('T')[0]);
+        // Set check-out date (normalized)
+        setSelectedDates({ start: normalizedStart, end: normalizedClickedDate });
+        setCheckOut(formatLocalDate(normalizedClickedDate));
         setShowCalendar(false);
       }
     }
@@ -900,10 +1005,19 @@ const ListingDetails = () => {
     // Add cells for each day of the month
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(year, month, day);
+      const normalizedDate = normalizeDateForComparison(date);
       const isUnavailable = isDateUnavailable(date);
       const isPast = isDateInPast(date);
-      const isStart = selectedDates.start?.toDateString() === date.toDateString();
-      const isEnd = selectedDates.end?.toDateString() === date.toDateString();
+      
+      // Use normalized date comparison for accurate start/end detection
+      const normalizedStart = selectedDates.start ? normalizeDateForComparison(selectedDates.start) : null;
+      const normalizedEnd = selectedDates.end ? normalizeDateForComparison(selectedDates.end) : null;
+      
+      const isStart = normalizedDate && normalizedStart && 
+                      normalizedDate.getTime() === normalizedStart.getTime();
+      const isEnd = normalizedDate && normalizedEnd && 
+                    normalizedDate.getTime() === normalizedEnd.getTime();
+      
       const inRange = isDateInRange(date);
       const inHoverRange = isDateInHoverRange(date);
       const isDisabled = isUnavailable || isPast;
@@ -1546,10 +1660,14 @@ const ListingDetails = () => {
                       
                       // Validate that check-in and check-out are not the same date
                       if (listing.category === 'home' && checkIn && checkOut) {
-                        const checkInDate = new Date(checkIn);
-                        const checkOutDate = new Date(checkOut);
-                        checkInDate.setHours(0, 0, 0, 0);
-                        checkOutDate.setHours(0, 0, 0, 0);
+                        // Use normalization function to handle ISO date strings correctly
+                        const checkInDate = normalizeDateForComparison(checkIn);
+                        const checkOutDate = normalizeDateForComparison(checkOut);
+                        
+                        if (!checkInDate || !checkOutDate) {
+                          alert('Invalid date format. Please select dates again.');
+                          return;
+                        }
                         
                         if (checkInDate.getTime() === checkOutDate.getTime()) {
                           alert('Check-out date must be at least 1 day after check-in date. Please select different dates.');
@@ -1563,6 +1681,7 @@ const ListingDetails = () => {
                         }
                         
                         // Validate that selected dates don't include unavailable dates
+                        // Only checks check-in date and nights before check-out (excludes check-out date)
                         if (hasUnavailableDatesInRange(checkIn, checkOut)) {
                           alert('Your selected dates include unavailable dates. Please select different dates.');
                           return;
@@ -2437,10 +2556,14 @@ const ListingDetails = () => {
                       
                       // Validate that check-in and check-out are not the same date
                       if (listing.category === 'home' && checkIn && checkOut) {
-                        const checkInDate = new Date(checkIn);
-                        const checkOutDate = new Date(checkOut);
-                        checkInDate.setHours(0, 0, 0, 0);
-                        checkOutDate.setHours(0, 0, 0, 0);
+                        // Use normalization function to handle ISO date strings correctly
+                        const checkInDate = normalizeDateForComparison(checkIn);
+                        const checkOutDate = normalizeDateForComparison(checkOut);
+                        
+                        if (!checkInDate || !checkOutDate) {
+                          alert('Invalid date format. Please select dates again.');
+                          return;
+                        }
                         
                         if (checkInDate.getTime() === checkOutDate.getTime()) {
                           alert('Check-out date must be at least 1 day after check-in date. Please select different dates.');
@@ -2454,6 +2577,7 @@ const ListingDetails = () => {
                         }
                         
                         // Validate that selected dates don't include unavailable dates
+                        // Only checks check-in date and nights before check-out (excludes check-out date)
                         if (hasUnavailableDatesInRange(checkIn, checkOut)) {
                           alert('Your selected dates include unavailable dates. Please select different dates.');
                           return;

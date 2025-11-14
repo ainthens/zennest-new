@@ -1,6 +1,7 @@
 // api/paypal/payout.js
 // Vercel serverless function for PayPal Payouts
 // This endpoint handles secure PayPal payouts using server-side credentials
+// Works with both Vercel serverless functions and Express.js (for local dev)
 
 export default async function handler(req, res) {
   // Enable CORS

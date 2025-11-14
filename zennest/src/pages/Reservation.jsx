@@ -30,6 +30,7 @@ import {
   FaBan,
   FaTimes
 } from 'react-icons/fa';
+import { parseDate, formatDate as formatDateUtil } from '../utils/dateUtils';
 
 const Reservation = () => {
   const { user } = useAuth();
@@ -106,24 +107,10 @@ const Reservation = () => {
             }
           }
 
-          // Convert dates
-          const checkInDate = booking.checkIn?.toDate 
-            ? booking.checkIn.toDate() 
-            : booking.checkIn 
-              ? new Date(booking.checkIn) 
-              : null;
-          
-          const checkOutDate = booking.checkOut?.toDate 
-            ? booking.checkOut.toDate() 
-            : booking.checkOut 
-              ? new Date(booking.checkOut) 
-              : null;
-          
-          const createdAtDate = booking.createdAt?.toDate 
-            ? booking.createdAt.toDate() 
-            : booking.createdAt 
-              ? new Date(booking.createdAt) 
-              : new Date();
+          // Convert dates using utility function for consistent parsing
+          const checkInDate = parseDate(booking.checkIn);
+          const checkOutDate = parseDate(booking.checkOut);
+          const createdAtDate = parseDate(booking.createdAt) || new Date();
 
           return {
             ...booking,
@@ -387,18 +374,9 @@ const Reservation = () => {
         }
       }
 
-      // Format dates
-      const checkInDate = bookingData.checkIn?.toDate 
-        ? bookingData.checkIn.toDate() 
-        : bookingData.checkIn 
-          ? (bookingData.checkIn instanceof Date ? bookingData.checkIn : new Date(bookingData.checkIn))
-          : null;
-      
-      const checkOutDate = bookingData.checkOut?.toDate 
-        ? bookingData.checkOut.toDate() 
-        : bookingData.checkOut 
-          ? (bookingData.checkOut instanceof Date ? bookingData.checkOut : new Date(bookingData.checkOut))
-          : null;
+      // Format dates using utility function for consistent parsing
+      const checkInDate = parseDate(bookingData.checkIn);
+      const checkOutDate = parseDate(bookingData.checkOut);
 
       // Prepare email data
       const emailData = {
@@ -482,18 +460,9 @@ const Reservation = () => {
         }
       }
 
-      // Format dates
-      const checkInDate = bookingData.checkIn?.toDate 
-        ? bookingData.checkIn.toDate() 
-        : bookingData.checkIn 
-          ? (bookingData.checkIn instanceof Date ? bookingData.checkIn : new Date(bookingData.checkIn))
-          : null;
-      
-      const checkOutDate = bookingData.checkOut?.toDate 
-        ? bookingData.checkOut.toDate() 
-        : bookingData.checkOut 
-          ? (bookingData.checkOut instanceof Date ? bookingData.checkOut : new Date(bookingData.checkOut))
-          : null;
+      // Format dates using utility function for consistent parsing
+      const checkInDate = parseDate(bookingData.checkIn);
+      const checkOutDate = parseDate(bookingData.checkOut);
 
       // Prepare email data
       const emailData = {
@@ -527,16 +496,8 @@ const Reservation = () => {
     }
   };
 
-  const formatDate = (date) => {
-    if (!date) return 'N/A';
-    const dateObj = date instanceof Date ? date : new Date(date);
-    if (isNaN(dateObj.getTime())) return 'Invalid Date';
-    return dateObj.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  };
+  // Use utility function for consistent date formatting
+  const formatDate = formatDateUtil;
 
   const getStatusInfo = (status) => {
     switch (status) {

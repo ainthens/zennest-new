@@ -1,0 +1,17 @@
+{
+  "name": "zennest-api-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Local development server for PayPal Payout API",
+  "main": "server.js",
+  "scripts": {
+    "dev:api": "node server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1"
+  }
+}
+

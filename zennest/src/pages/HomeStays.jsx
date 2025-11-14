@@ -121,9 +121,7 @@ const HomeStays = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 6;
   const [checkIn, setCheckIn] = useState(null);
-  const [checkOut, setCheckOut] = useState(null);
-  const [searchCheckIn, setSearchCheckIn] = useState(null);
-  const [searchCheckOut, setSearchCheckOut] = useState(null);
+  const [searchDate, setSearchDate] = useState(null);
   const [showGuestsDropdown, setShowGuestsDropdown] = useState(false);
   const guestsDropdownRef = useRef(null);
 
@@ -150,10 +148,9 @@ const HomeStays = () => {
   useEffect(() => {
     const locationParam = searchParams.get('location');
     const checkInParam = searchParams.get('checkIn');
-    const checkOutParam = searchParams.get('checkOut');
     const guestsParam = searchParams.get('guests');
 
-    if (locationParam || checkInParam || checkOutParam || guestsParam) {
+    if (locationParam || checkInParam || guestsParam) {
       const location = locationParam || '';
       const guests = guestsParam ? parseInt(guestsParam) : 0;
       setFilters(prev => ({
@@ -168,12 +165,7 @@ const HomeStays = () => {
       if (checkInParam) {
         const checkInDate = new Date(checkInParam);
         setCheckIn(checkInDate);
-        setSearchCheckIn(checkInDate);
-      }
-      if (checkOutParam) {
-        const checkOutDate = new Date(checkOutParam);
-        setCheckOut(checkOutDate);
-        setSearchCheckOut(checkOutDate);
+        setSearchDate(checkInDate);
       }
     }
   }, [searchParams]);
@@ -236,21 +228,49 @@ const HomeStays = () => {
           console.log(`✅ Found ${result.data.length} published listings`);
           
           // Map Firestore data to match HomeStayCard format
-          const mappedListings = result.data.map(listing => ({
-            id: listing.id,
-            title: listing.title || 'Untitled Listing',
-            location: listing.location || '',
-            pricePerNight: listing.rate || 0,
-            discount: listing.discount || 0,
-            rating: listing.rating || 0,
-            image: listing.images && listing.images.length > 0 ? listing.images[0] : null,
-            guests: listing.guests || 1,
-            bedrooms: listing.bedrooms || 0,
-            bathrooms: listing.bathrooms || 0,
-            description: listing.description || '',
-            images: listing.images || [],
-            hostId: listing.hostId
-          }));
+          const mappedListings = result.data.map(listing => {
+            // Convert unavailableDates from Firestore Timestamps to date strings (YYYY-MM-DD)
+            let unavailableDates = [];
+            if (listing.unavailableDates && Array.isArray(listing.unavailableDates)) {
+              unavailableDates = listing.unavailableDates.map(date => {
+                if (date?.toDate) {
+                  // Firestore Timestamp
+                  const dateObj = date.toDate();
+                  const year = dateObj.getFullYear();
+                  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                  const day = String(dateObj.getDate()).padStart(2, '0');
+                  return `${year}-${month}-${day}`;
+                } else if (date instanceof Date) {
+                  // Date object
+                  const year = date.getFullYear();
+                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                  const day = String(date.getDate()).padStart(2, '0');
+                  return `${year}-${month}-${day}`;
+                } else if (typeof date === 'string') {
+                  // Already a string (YYYY-MM-DD format)
+                  return date;
+                }
+                return null;
+              }).filter(Boolean);
+            }
+            
+            return {
+              id: listing.id,
+              title: listing.title || 'Untitled Listing',
+              location: listing.location || '',
+              pricePerNight: listing.rate || 0,
+              discount: listing.discount || 0,
+              rating: listing.rating || 0,
+              image: listing.images && listing.images.length > 0 ? listing.images[0] : null,
+              guests: listing.guests || 1,
+              bedrooms: listing.bedrooms || 0,
+              bathrooms: listing.bathrooms || 0,
+              description: listing.description || '',
+              images: listing.images || [],
+              hostId: listing.hostId,
+              unavailableDates: unavailableDates
+            };
+          });
           
           setListings(mappedListings);
           console.log(`✅ Mapped ${mappedListings.length} listings successfully`);
@@ -339,6 +359,15 @@ const HomeStays = () => {
   }, [listings]);
 
   const filtered = useMemo(() => {
+    // Local date formatter to convert Date objects to YYYY-MM-DD strings
+    const formatDate = (date) => {
+      if (!date) return null;
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    };
+
     let results = listings.filter((h) => {
       // Location search filter
       if (filters.location && !h.location.toLowerCase().includes(filters.location.toLowerCase())) return false;
@@ -348,6 +377,15 @@ const HomeStays = () => {
       
       // Guests filter
       if (filters.guests && h.guests < filters.guests) return false;
+
+      // Date availability filter - exclude listings where selected date is unavailable
+      if (checkIn) {
+        const selected = formatDate(checkIn);
+        // If listing has this date as unavailable → EXCLUDE it
+        if (h.unavailableDates && Array.isArray(h.unavailableDates) && h.unavailableDates.includes(selected)) {
+          return false;
+        }
+      }
 
       // Category filter
       if (selectedCategory !== 'all') {
@@ -391,7 +429,7 @@ const HomeStays = () => {
 
     // Default order (featured)
     return results;
-  }, [listings, filters, selectedCategory, priceRange]);
+  }, [listings, filters, checkIn, selectedCategory, priceRange]);
 
   // Pagination calculations
   const totalPages = Math.ceil(filtered.length / itemsPerPage);
@@ -402,7 +440,7 @@ const HomeStays = () => {
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [filters, selectedCategory, priceRange]);
+  }, [filters, checkIn, selectedCategory, priceRange]);
 
   const handleToggleFavorite = async (id) => {
     if (!user?.uid) {
@@ -440,9 +478,7 @@ const HomeStays = () => {
     setSelectedCategory("all");
     setPriceRange("all");
     setCheckIn(null);
-    setCheckOut(null);
-    setSearchCheckIn(null);
-    setSearchCheckOut(null);
+    setSearchDate(null);
   };
 
   const handleSearch = (e) => {
@@ -457,8 +493,7 @@ const HomeStays = () => {
       location: searchInputs.location,
       guests: searchInputs.guests
     }));
-    setCheckIn(searchCheckIn);
-    setCheckOut(searchCheckOut);
+    setCheckIn(searchDate);
     setCurrentPage(1);
     
     // Scroll to homestays list after a short delay to ensure DOM is updated
@@ -564,40 +599,15 @@ const HomeStays = () => {
               {/* Divider */}
               <div className="hidden sm:block w-px h-12 bg-gray-200 mx-1"></div>
 
-              {/* Check-in */}
+              {/* Date */}
               <div className="flex-1 min-w-0 border-b sm:border-b-0 border-gray-200">
-                <label className="block text-xs font-semibold text-gray-900 mb-1 px-4 pt-2">Check-in</label>
+                <label className="block text-xs font-semibold text-gray-900 mb-1 px-4 pt-2">Date</label>
                 <DatePicker
-                  selected={searchCheckIn}
-                  onChange={(date) => setSearchCheckIn(date)}
-                  selectsStart
-                  startDate={searchCheckIn}
-                  endDate={searchCheckOut}
+                  selected={searchDate}
+                  onChange={(date) => setSearchDate(date)}
                   minDate={new Date()}
                   dateFormat="MMM dd"
-                  placeholderText="Add dates"
-                  customInput={<CustomDateInput />}
-                  wrapperClassName="w-full"
-                  popperClassName="z-50"
-                  popperPlacement="bottom-start"
-                />
-              </div>
-
-              {/* Divider */}
-              <div className="hidden sm:block w-px h-12 bg-gray-200 mx-1"></div>
-
-              {/* Check-out */}
-              <div className="flex-1 min-w-0 border-b sm:border-b-0 border-gray-200">
-                <label className="block text-xs font-semibold text-gray-900 mb-1 px-4 pt-2">Check-out</label>
-                <DatePicker
-                  selected={searchCheckOut}
-                  onChange={(date) => setSearchCheckOut(date)}
-                  selectsEnd
-                  startDate={searchCheckIn}
-                  endDate={searchCheckOut}
-                  minDate={searchCheckIn || new Date()}
-                  dateFormat="MMM dd"
-                  placeholderText="Add dates"
+                  placeholderText="Select date"
                   customInput={<CustomDateInput />}
                   wrapperClassName="w-full"
                   popperClassName="z-50"
@@ -748,7 +758,7 @@ const HomeStays = () => {
             </div>
 
             {/* Active Filters Count */}
-            {(filters.location || filters.guests > 0 || selectedCategory !== 'all' || priceRange !== 'all') && (
+            {(filters.location || filters.guests > 0 || checkIn || selectedCategory !== 'all' || priceRange !== 'all') && (
               <div className="mt-4 flex items-center justify-between pt-4 border-t border-gray-200">
                 <div className="text-sm text-gray-600">
                   Showing {filtered.length} of {listings.length} homestays

@@ -23,6 +23,7 @@ import {
   FaEnvelope,
   FaBan
 } from 'react-icons/fa';
+import { parseDate, formatDate as formatDateUtil, calculateNights as calculateNightsUtil } from '../utils/dateUtils';
 
 const UserBookings = () => {
   const { user } = useAuth();
@@ -103,24 +104,10 @@ const UserBookings = () => {
           }
         }
 
-        // Handle date conversions safely
-        const checkInDate = bookingData.checkIn?.toDate 
-          ? bookingData.checkIn.toDate() 
-          : bookingData.checkIn 
-            ? new Date(bookingData.checkIn) 
-            : null;
-        
-        const checkOutDate = bookingData.checkOut?.toDate 
-          ? bookingData.checkOut.toDate() 
-          : bookingData.checkOut 
-            ? new Date(bookingData.checkOut) 
-            : null;
-        
-        const createdAtDate = bookingData.createdAt?.toDate 
-          ? bookingData.createdAt.toDate() 
-          : bookingData.createdAt 
-            ? new Date(bookingData.createdAt) 
-            : new Date();
+        // Handle date conversions using utility function for consistent parsing
+        const checkInDate = parseDate(bookingData.checkIn);
+        const checkOutDate = parseDate(bookingData.checkOut);
+        const createdAtDate = parseDate(bookingData.createdAt) || new Date();
 
         bookingsData.push({
           id: docSnap.id,
@@ -168,8 +155,15 @@ const UserBookings = () => {
     }
     
     const now = new Date();
-    const checkIn = booking.checkIn instanceof Date ? booking.checkIn : new Date(booking.checkIn);
-    const checkOut = booking.checkOut instanceof Date ? booking.checkOut : new Date(booking.checkOut);
+    const checkIn = parseDate(booking.checkIn);
+    const checkOut = parseDate(booking.checkOut);
+    
+    if (!checkIn || !checkOut) {
+      // Handle bookings without dates (services/experiences)
+      if (booking.status === 'confirmed' || booking.status === 'completed') return 'active';
+      if (booking.status === 'pending' || booking.status === 'reserved') return 'upcoming';
+      return 'past';
+    }
 
     if (now < checkIn) return 'upcoming';
     if (now >= checkIn && now <= checkOut) return 'active';
@@ -234,24 +228,9 @@ const UserBookings = () => {
     return getBookingStatus(booking) === filter;
   });
 
-  const formatDate = (date) => {
-    if (!date) return 'N/A';
-    const dateObj = date instanceof Date ? date : new Date(date);
-    if (isNaN(dateObj.getTime())) return 'Invalid Date';
-    return dateObj.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  };
-
-  const calculateNights = (checkIn, checkOut) => {
-    if (!checkIn || !checkOut) return 0;
-    const checkInDate = checkIn instanceof Date ? checkIn : new Date(checkIn);
-    const checkOutDate = checkOut instanceof Date ? checkOut : new Date(checkOut);
-    const diff = checkOutDate - checkInDate;
-    return Math.ceil(diff / (1000 * 60 * 60 * 24));
-  };
+  // Use utility functions for consistent date formatting
+  const formatDate = formatDateUtil;
+  const calculateNights = calculateNightsUtil;
 
   // Check if a booking can be cancelled
   const canCancelBooking = (booking) => {

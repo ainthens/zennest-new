@@ -16,6 +16,7 @@ import {
   onSnapshot
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { parseDate } from '../utils/dateUtils';
 
 // Host profile management
 export const createHostProfile = async (userId, hostData) => {
@@ -156,8 +157,11 @@ export const createListing = async (listingData) => {
     if (!listingData.hostId) {
       throw new Error('Host ID is required to create a listing');
     }
-    if (!listingData.title || !listingData.title.trim()) {
-      throw new Error('Listing title is required');
+    
+    // Title is only required for published listings, not drafts
+    const isPublished = listingData.status === 'published';
+    if (isPublished && (!listingData.title || !listingData.title.trim())) {
+      throw new Error('Listing title is required to publish a listing');
     }
     
     // Verify user has a host profile (not just guest profile)
@@ -171,17 +175,20 @@ export const createListing = async (listingData) => {
       throw new Error('Invalid host profile. Please contact support.');
     }
     
-    // Check if host can create more listings
-    const canCreate = await canCreateListing(listingData.hostId);
-    if (!canCreate.success || !canCreate.canCreate) {
-      throw new Error(canCreate.error || 'Cannot create listing. Please check your subscription.');
+    // Check if host can create more listings (only for published listings)
+    // Drafts don't count against listing limits
+    if (isPublished) {
+      const canCreate = await canCreateListing(listingData.hostId);
+      if (!canCreate.success || !canCreate.canCreate) {
+        throw new Error(canCreate.error || 'Cannot create listing. Please check your subscription.');
+      }
     }
     
     const listingsRef = collection(db, 'listings');
     
-    // Prepare the document data - ensure all required fields are present
+    // Prepare the document data - allow empty fields for drafts
     const docData = {
-      title: listingData.title.trim(),
+      title: listingData.title?.trim() || '', // Allow empty title for drafts
       category: listingData.category || 'home',
       description: listingData.description?.trim() || '',
       location: listingData.location?.trim() || '',
@@ -458,12 +465,12 @@ export const getHostBookings = async (hostId, status = null) => {
       const bookings = [];
       querySnapshot.forEach((doc) => {
         const data = doc.data();
-        // Convert Firestore Timestamps to Date objects for checkIn and checkOut
+        // Convert Firestore Timestamps to Date objects using utility function for consistent parsing
         bookings.push({ 
           id: doc.id, 
           ...data,
-          checkIn: data.checkIn ? (data.checkIn.toDate ? data.checkIn.toDate() : (data.checkIn instanceof Date ? data.checkIn : new Date(data.checkIn))) : null,
-          checkOut: data.checkOut ? (data.checkOut.toDate ? data.checkOut.toDate() : (data.checkOut instanceof Date ? data.checkOut : new Date(data.checkOut))) : null
+          checkIn: parseDate(data.checkIn),
+          checkOut: parseDate(data.checkOut)
         });
       });
       return { success: true, data: bookings };
@@ -490,43 +497,22 @@ export const getHostBookings = async (hostId, status = null) => {
         const bookings = [];
         querySnapshot.forEach((doc) => {
           const data = doc.data();
-          // Helper function to convert dates to Date objects
-          const convertDate = (dateValue) => {
-            if (!dateValue) return null;
-            // Handle Firestore Timestamp
-            if (dateValue.toDate && typeof dateValue.toDate === 'function') {
-              return dateValue.toDate();
-            }
-            // Handle Date objects
-            if (dateValue instanceof Date) {
-              return dateValue;
-            }
-            // Handle date strings (format: "YYYY-MM-DD")
-            if (typeof dateValue === 'string') {
-              // If it's in "YYYY-MM-DD" format, parse it carefully
-              if (/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
-                const [year, month, day] = dateValue.split('-').map(Number);
-                return new Date(year, month - 1, day);
-              }
-              // Otherwise, try to parse as ISO string or other format
-              return new Date(dateValue);
-            }
-            return dateValue;
-          };
-          
+          // Convert Firestore Timestamps to Date objects using utility function for consistent parsing
           bookings.push({ 
             id: doc.id, 
             ...data,
-            checkIn: convertDate(data.checkIn),
-            checkOut: convertDate(data.checkOut)
+            checkIn: parseDate(data.checkIn),
+            checkOut: parseDate(data.checkOut)
           });
         });
         
         // Sort by checkIn descending in memory
         bookings.sort((a, b) => {
-          const dateA = a.checkIn instanceof Date ? a.checkIn.getTime() : 0;
-          const dateB = b.checkIn instanceof Date ? b.checkIn.getTime() : 0;
-          return dateB - dateA;
+          const dateA = parseDate(a.checkIn);
+          const dateB = parseDate(b.checkIn);
+          const timeA = dateA ? dateA.getTime() : 0;
+          const timeB = dateB ? dateB.getTime() : 0;
+          return timeB - timeA; // Descending order (newest first)
         });
         
         return { success: true, data: bookings };
@@ -561,22 +547,35 @@ export const updateBookingStatus = async (bookingId, status, hostId = null) => {
       updatedAt: serverTimestamp()
     });
     
-    // Award points for first completed booking
+    // Award points for booking milestones when status changes to completed
+    // Note: Points for first booking are awarded when booking is confirmed (in approveBooking)
+    // This handles milestones that might be reached when a booking is completed
     if (status === 'completed' && previousStatus !== 'completed' && hostId) {
       try {
-        // Check if this is the host's first completed booking
         const bookingsRef = collection(db, 'bookings');
-        const completedBookingsQuery = query(
+        
+        // Get all confirmed and completed bookings for this host
+        // Count both confirmed and completed as "successful bookings"
+        const successfulBookingsQuery = query(
           bookingsRef,
           where('hostId', '==', hostId),
-          where('status', '==', 'completed')
+          where('status', 'in', ['confirmed', 'completed'])
         );
-        const completedBookings = await getDocs(completedBookingsQuery);
+        const successfulBookings = await getDocs(successfulBookingsQuery);
+        const totalSuccessfulBookings = successfulBookings.size;
         
-        // If this is the first completed booking (only this one exists)
-        if (completedBookings.size === 1) {
-          await updateHostPoints(hostId, 100, 'Completed first booking');
-          console.log('✅ Points awarded for first completed booking');
+        // Award points for 10 bookings milestone (250 points)
+        // Check if we just reached exactly 10 bookings
+        if (totalSuccessfulBookings === 10) {
+          await updateHostPoints(hostId, 250, 'Completed 10 bookings');
+          console.log('✅ Points awarded for 10 bookings milestone');
+        }
+        
+        // Award points for 50 bookings milestone (1000 points)
+        // Check if we just reached exactly 50 bookings
+        if (totalSuccessfulBookings === 50) {
+          await updateHostPoints(hostId, 1000, 'Completed 50 bookings');
+          console.log('✅ Points awarded for 50 bookings milestone');
         }
       } catch (pointsError) {
         console.error('Error awarding points for completed booking:', pointsError);
@@ -631,6 +630,44 @@ export const approveBooking = async (bookingId, hostId) => {
         console.error('Error transferring payment to host:', transferError);
         // Don't fail the approval if transfer fails
       }
+    }
+    
+    // Award points for successful bookings (confirmed or completed)
+    // Count both confirmed and completed bookings for milestones
+    try {
+      const bookingsRef = collection(db, 'bookings');
+      
+      // Get all confirmed and completed bookings for this host
+      const confirmedBookingsQuery = query(
+        bookingsRef,
+        where('hostId', '==', hostId),
+        where('status', 'in', ['confirmed', 'completed'])
+      );
+      const confirmedBookings = await getDocs(confirmedBookingsQuery);
+      const totalSuccessfulBookings = confirmedBookings.size;
+      
+      // Award points for first booking (100 points)
+      if (totalSuccessfulBookings === 1) {
+        await updateHostPoints(hostId, 100, 'Completed first booking');
+        console.log('✅ Points awarded for first booking');
+      }
+      
+      // Award points for 10 bookings milestone (250 points)
+      // Check if we just reached exactly 10 bookings
+      if (totalSuccessfulBookings === 10) {
+        await updateHostPoints(hostId, 250, 'Completed 10 bookings');
+        console.log('✅ Points awarded for 10 bookings milestone');
+      }
+      
+      // Award points for 50 bookings milestone (1000 points)
+      // Check if we just reached exactly 50 bookings
+      if (totalSuccessfulBookings === 50) {
+        await updateHostPoints(hostId, 1000, 'Completed 50 bookings');
+        console.log('✅ Points awarded for 50 bookings milestone');
+      }
+    } catch (pointsError) {
+      console.error('Error awarding points for booking confirmation:', pointsError);
+      // Don't fail the approval if points fail
     }
     
     // Return booking data for email sending

@@ -14,7 +14,10 @@ import {
   FaCheckCircle,
   FaArrowUp,
   FaSpinner,
-  FaTicketAlt
+  FaTicketAlt,
+  FaCopy,
+  FaTimes,
+  FaWallet
 } from 'react-icons/fa';
 
 const HostRewards = () => {
@@ -25,13 +28,44 @@ const HostRewards = () => {
   const [redeeming, setRedeeming] = useState(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [totalEarnings, setTotalEarnings] = useState(0);
+  const [claimedRewards, setClaimedRewards] = useState(new Set()); // Track which rewards have been claimed
+  const [showCodeModal, setShowCodeModal] = useState(false);
+  const [redeemedCode, setRedeemedCode] = useState(null); // Store the code and reward info for the modal
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (user) {
       fetchRewardsData();
+      checkClaimedRewards();
     }
   }, [user]);
+
+  // Check which rewards have already been claimed
+  const checkClaimedRewards = async () => {
+    if (!user?.uid) return;
+    
+    try {
+      const validCodesRef = collection(db, 'valid codes');
+      const q = query(
+        validCodesRef,
+        where('hostId', '==', user.uid)
+      );
+      const querySnapshot = await getDocs(q);
+      
+      const claimed = new Set();
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        // Use reward name as identifier to track which rewards have been claimed
+        if (data.reward) {
+          claimed.add(data.reward);
+        }
+      });
+      
+      setClaimedRewards(claimed);
+    } catch (error) {
+      console.error('Error checking claimed rewards:', error);
+    }
+  };
 
   const fetchRewardsData = async () => {
     try {
@@ -44,21 +78,6 @@ const HostRewards = () => {
         setHostProfile(profileResult.data);
       } else {
         setError('Failed to load host profile');
-      }
-
-      // Fetch total earnings from bookings
-      try {
-        const bookingsResult = await getHostBookings(user.uid);
-        const bookings = bookingsResult.data || [];
-        
-        // Calculate total earnings from completed bookings
-        const earnings = bookings
-          .filter(b => b.status === 'completed')
-          .reduce((sum, b) => sum + (b.total || b.totalAmount || 0), 0);
-        
-        setTotalEarnings(earnings);
-      } catch (earningsError) {
-        console.error('Error fetching earnings:', earningsError);
       }
 
       // Fetch points transactions
@@ -154,7 +173,24 @@ const HostRewards = () => {
   const tier = getTier();
   const TierIcon = tier.icon;
 
+  const generateRandomCode = () => {
+    // Generate a random alphanumeric code (8 characters)
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let code = '';
+    for (let i = 0; i < 8; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+  };
+
   const handleRedeemReward = async (reward) => {
+    // Check if reward has already been claimed
+    if (claimedRewards.has(reward.reward)) {
+      setError('This reward has already been claimed. Each reward can only be claimed once.');
+      setTimeout(() => setError(''), 5000);
+      return;
+    }
+
     if (points < reward.points) {
       setError(`You need ${reward.points - points} more points to redeem this reward`);
       setTimeout(() => setError(''), 5000);
@@ -165,23 +201,22 @@ const HostRewards = () => {
       setRedeeming(reward.points);
       setError('');
       
-      // Create voucher/coupon
-      const vouchersRef = collection(db, 'vouchers');
-      const voucherCode = `HOST-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+      // All rewards are now e-wallet codes
+      const randomCode = generateRandomCode();
       
-      await addDoc(vouchersRef, {
+      // Save to "valid codes" collection
+      const validCodesRef = collection(db, 'valid codes');
+      await addDoc(validCodesRef, {
         hostId: user.uid,
-        code: voucherCode,
-        type: reward.type,
-        discount: reward.discount,
-        discountType: reward.discountType || 'fixed',
+        code: randomCode,
+        reward: reward.reward,
+        pointsCost: reward.points,
+        creditValue: reward.creditValue || 0, // Store the credit value
+        createdAt: serverTimestamp(),
         status: 'active',
         redeemed: false,
         redeemedAt: null,
-        expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000), // 90 days
-        createdAt: serverTimestamp(),
-        pointsCost: reward.points,
-        description: reward.reward
+        redeemedBy: null
       });
       
       // Deduct points
@@ -192,11 +227,20 @@ const HostRewards = () => {
         points - reward.points
       );
       
-      // Refresh data
+      // Refresh data and claimed rewards
       await fetchRewardsData();
+      await checkClaimedRewards();
       
-      setSuccess(`Successfully redeemed ${reward.reward}! Your voucher code is: ${voucherCode}`);
-      setTimeout(() => setSuccess(''), 10000);
+      // Show modal with code instead of alert
+      setRedeemedCode({
+        code: randomCode,
+        reward: reward.reward,
+        creditValue: reward.creditValue || 0
+      });
+      setShowCodeModal(true);
+      
+      setSuccess(`Successfully redeemed ${reward.reward}!`);
+      setTimeout(() => setSuccess(''), 5000);
     } catch (error) {
       console.error('Error redeeming reward:', error);
       setError('Failed to redeem reward. Please try again.');
@@ -206,74 +250,99 @@ const HostRewards = () => {
     }
   };
 
+  const copyToClipboard = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.opacity = '0';
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error('Fallback copy failed:', err);
+      }
+      document.body.removeChild(textArea);
+    }
+  };
+
   const rewards = [
     { 
+      points: 30, 
+      reward: 'E-wallet Credit (₱200)', 
+      available: points >= 30,
+      type: 'code',
+      creditValue: 200
+    },
+    { 
       points: 500, 
-      reward: '₱500 Discount Voucher', 
+      reward: 'E-wallet Credit (₱500)', 
       available: points >= 500,
-      type: 'discount',
-      discount: 500,
-      discountType: 'fixed'
+      type: 'code',
+      creditValue: 500
     },
     { 
       points: 1000, 
-      reward: '₱1,000 Discount Voucher', 
+      reward: 'E-wallet Credit (₱1,000)', 
       available: points >= 1000,
-      type: 'discount',
-      discount: 1000,
-      discountType: 'fixed'
+      type: 'code',
+      creditValue: 1000
     },
     { 
       points: 2000, 
-      reward: '10% Off Next Booking', 
+      reward: 'E-wallet Credit (₱2,000)', 
       available: points >= 2000,
-      type: 'discount',
-      discount: 10,
-      discountType: 'percentage'
+      type: 'code',
+      creditValue: 2000
     },
     { 
       points: 2500, 
-      reward: '₱2,500 Discount Voucher', 
+      reward: 'E-wallet Credit (₱2,500)', 
       available: points >= 2500,
-      type: 'discount',
-      discount: 2500,
-      discountType: 'fixed'
+      type: 'code',
+      creditValue: 2500
     },
     { 
       points: 5000, 
-      reward: '₱5,000 Discount Voucher', 
+      reward: 'E-wallet Credit (₱5,000)', 
       available: points >= 5000,
-      type: 'discount',
-      discount: 5000,
-      discountType: 'fixed'
+      type: 'code',
+      creditValue: 5000
     },
     { 
       points: 7500, 
-      reward: '20% Off Next Booking', 
+      reward: 'E-wallet Credit (₱7,500)', 
       available: points >= 7500,
-      type: 'discount',
-      discount: 20,
-      discountType: 'percentage'
+      type: 'code',
+      creditValue: 7500
     },
     { 
       points: 10000, 
-      reward: 'Premium Host Badge + ₱10,000 Voucher', 
+      reward: 'E-wallet Credit (₱10,000)', 
       available: points >= 10000,
-      type: 'premium',
-      discount: 10000,
-      discountType: 'fixed'
+      type: 'code',
+      creditValue: 10000
     }
   ];
 
   const waysToEarn = [
-    { action: 'Complete first booking', points: 100, icon: FaCheckCircle },
-    { action: 'Publish a listing', points: 50, icon: FaCheckCircle },
-    { action: 'Receive 5-star review', points: 25, icon: FaStar },
-    { action: 'Complete 10 bookings', points: 250, icon: FaCheckCircle },
-    { action: 'Complete 50 bookings', points: 1000, icon: FaTrophy },
-    { action: 'Monthly active host', points: 100, icon: FaChartLine },
-    { action: 'Refer a host', points: 200, icon: FaArrowUp },
-    { action: 'Earn ₱10,000', points: 500, icon: FaCoins }
+    { action: 'Complete first booking', points: 100, icon: FaCheckCircle, description: 'Get your first confirmed booking' },
+    { action: 'Publish a listing', points: 50, icon: FaCheckCircle, description: 'Publish your first listing' },
+    { action: 'Receive 5-star review', points: 25, icon: FaStar, description: 'Get a 5-star rating from a guest' },
+    { action: 'Complete 10 bookings', points: 250, icon: FaCheckCircle, description: 'Reach 10 confirmed bookings' },
+    { action: 'Complete 50 bookings', points: 1000, icon: FaTrophy, description: 'Reach 50 confirmed bookings' },
+    { action: 'Monthly active host', points: 100, icon: FaChartLine, description: 'Be active this month' },
+    { action: 'Refer a host', points: 200, icon: FaArrowUp, description: 'Refer another host to join' },
+    { action: 'Earn ₱10,000', points: 500, icon: FaCoins, description: 'Accumulate ₱10,000 in earnings' }
   ];
 
   if (loading) {
@@ -323,7 +392,7 @@ const HostRewards = () => {
       </AnimatePresence>
 
       {/* Points Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -371,26 +440,6 @@ const HostRewards = () => {
             </div>
           </div>
         </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="bg-white rounded-xl shadow-lg p-6 border border-gray-200"
-        >
-          <div className="flex items-center justify-between mb-4">
-            <FaChartLine className="text-3xl text-emerald-600" />
-            <div className="text-right">
-              <p className="text-sm text-gray-600">Total Earnings</p>
-              <p className="text-2xl font-bold text-gray-900">
-                ₱{totalEarnings.toLocaleString()}
-              </p>
-            </div>
-          </div>
-          <p className="text-xs text-gray-500 mt-2">
-            From completed bookings
-          </p>
-        </motion.div>
       </div>
 
       {/* Ways to Earn */}
@@ -418,6 +467,9 @@ const HostRewards = () => {
                   </div>
                   <div className="flex-1">
                     <p className="font-medium text-gray-900">{way.action}</p>
+                    {way.description && (
+                      <p className="text-xs text-gray-500 mt-0.5">{way.description}</p>
+                    )}
                   </div>
                   <div className="text-right">
                     <p className="font-bold text-emerald-700">+{way.points}</p>
@@ -437,61 +489,86 @@ const HostRewards = () => {
             <FaGift className="text-emerald-600" />
             Available Rewards
           </h2>
+          <p className="text-sm text-gray-600 mt-1">Each reward can only be claimed once. Claim your code and redeem it on the Payments & Earnings page.</p>
         </div>
         <div className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {rewards.map((reward, index) => (
-              <motion.div
-                key={index}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1 }}
-                className={`
-                  p-5 rounded-lg border-2 transition-all
-                  ${reward.available
-                    ? 'border-emerald-600 bg-emerald-50 hover:shadow-md'
-                    : 'border-gray-200 bg-gray-50 opacity-75'
-                  }
-                `}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2">
-                      <FaTicketAlt className={`${reward.available ? 'text-emerald-600' : 'text-gray-400'}`} />
-                      <p className="font-semibold text-gray-900">{reward.reward}</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {rewards.map((reward, index) => {
+              const isClaimed = claimedRewards.has(reward.reward);
+              const canClaim = reward.available && !isClaimed;
+              
+              return (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.1 }}
+                  className={`
+                    p-5 rounded-lg border-2 transition-all relative
+                    ${isClaimed
+                      ? 'border-gray-300 bg-gray-100 opacity-60'
+                      : canClaim
+                      ? 'border-emerald-600 bg-emerald-50 hover:shadow-md'
+                      : 'border-gray-200 bg-gray-50 opacity-75'
+                    }
+                  `}
+                >
+                  {isClaimed && (
+                    <div className="absolute top-2 right-2">
+                      <span className="px-2 py-1 bg-gray-600 text-white text-xs font-semibold rounded-full">
+                        Claimed
+                      </span>
                     </div>
-                    <p className="text-sm text-gray-600 mb-3">
-                      {reward.points.toLocaleString()} points required
-                    </p>
-                    {reward.available ? (
-                      <button 
-                        onClick={() => handleRedeemReward(reward)}
-                        disabled={redeeming === reward.points}
-                        className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                      >
-                        {redeeming === reward.points ? (
-                          <>
-                            <FaSpinner className="animate-spin" />
-                            Redeeming...
-                          </>
-                        ) : (
-                          <>
-                            <FaGift />
-                            Redeem Now
-                          </>
-                        )}
-                      </button>
-                    ) : (
-                      <div className="text-center py-2 px-4 bg-gray-200 rounded-lg">
-                        <p className="text-sm text-gray-600">
-                          {reward.points - points} more points needed
-                        </p>
+                  )}
+                  
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <FaWallet className={`${canClaim ? 'text-emerald-600' : 'text-gray-400'}`} />
+                        <p className="font-semibold text-gray-900">{reward.reward}</p>
                       </div>
-                    )}
+                      <p className="text-sm text-gray-600 mb-1">
+                        {reward.points.toLocaleString()} points required
+                      </p>
+                      <p className="text-xs text-emerald-600 font-medium mb-3">
+                        Credit Value: ₱{reward.creditValue.toLocaleString()}
+                      </p>
+                      {isClaimed ? (
+                        <div className="text-center py-2 px-4 bg-gray-200 rounded-lg">
+                          <p className="text-sm text-gray-600 font-medium">
+                            Already Claimed
+                          </p>
+                        </div>
+                      ) : canClaim ? (
+                        <button 
+                          onClick={() => handleRedeemReward(reward)}
+                          disabled={redeeming === reward.points}
+                          className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        >
+                          {redeeming === reward.points ? (
+                            <>
+                              <FaSpinner className="animate-spin" />
+                              Redeeming...
+                            </>
+                          ) : (
+                            <>
+                              <FaGift />
+                              Redeem Now
+                            </>
+                          )}
+                        </button>
+                      ) : (
+                        <div className="text-center py-2 px-4 bg-gray-200 rounded-lg">
+                          <p className="text-sm text-gray-600">
+                            {reward.points - points} more points needed
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -570,6 +647,115 @@ const HostRewards = () => {
           )}
         </div>
       </div>
+
+      {/* Code Redemption Modal */}
+      <AnimatePresence>
+        {showCodeModal && redeemedCode && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setShowCodeModal(false);
+                setRedeemedCode(null);
+                setCopied(false);
+              }
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                  <FaGift className="text-emerald-600" />
+                  Reward Redeemed!
+                </h2>
+                <button
+                  onClick={() => {
+                    setShowCodeModal(false);
+                    setRedeemedCode(null);
+                    setCopied(false);
+                  }}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <FaTimes className="text-xl" />
+                </button>
+              </div>
+
+              <div className="mb-6">
+                <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-lg p-4 mb-4 border border-emerald-200">
+                  <p className="text-sm text-emerald-700 font-medium mb-2">Reward:</p>
+                  <p className="text-lg font-bold text-emerald-900">{redeemedCode.reward}</p>
+                  <p className="text-sm text-emerald-600 mt-1">Credit Value: ₱{redeemedCode.creditValue.toLocaleString()}</p>
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Your Redemption Code
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 bg-gray-50 border-2 border-emerald-500 rounded-lg p-4">
+                      <p className="text-2xl font-mono font-bold text-center text-gray-900 tracking-wider">
+                        {redeemedCode.code}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => copyToClipboard(redeemedCode.code)}
+                      className={`px-4 py-4 rounded-lg font-medium transition-colors flex items-center gap-2 ${
+                        copied
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                      }`}
+                    >
+                      {copied ? (
+                        <>
+                          <FaCheckCircle />
+                          Copied!
+                        </>
+                      ) : (
+                        <>
+                          <FaCopy />
+                          Copy
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <p className="text-sm text-blue-800 mb-2 font-semibold">
+                    <strong>How to use this code:</strong>
+                  </p>
+                  <ol className="text-xs text-blue-700 space-y-1 list-decimal list-inside">
+                    <li>Copy the code above</li>
+                    <li>Go to Payments & Earnings page</li>
+                    <li>Click "Claim Credit" button</li>
+                    <li>Paste your code and claim your credit</li>
+                  </ol>
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setShowCodeModal(false);
+                  setRedeemedCode(null);
+                  setCopied(false);
+                }}
+                className="w-full bg-emerald-600 text-white py-3 rounded-lg hover:bg-emerald-700 transition-colors font-medium flex items-center justify-center gap-2"
+              >
+                <FaCheckCircle />
+                Got it!
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

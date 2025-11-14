@@ -39,6 +39,7 @@ import {
   FaCheck
 } from 'react-icons/fa';
 import { Timestamp } from 'firebase/firestore';
+import { parseDate, formatDate as formatDateUtil, formatDateTime as formatDateTimeUtil, calculateNights as calculateNightsUtil } from '../utils/dateUtils';
 
 const BookingDetails = () => {
   const { id } = useParams();
@@ -107,30 +108,11 @@ const BookingDetails = () => {
         return;
       }
 
-      // Convert dates
-      const checkInDate = bookingData.checkIn?.toDate 
-        ? bookingData.checkIn.toDate() 
-        : bookingData.checkIn 
-          ? new Date(bookingData.checkIn) 
-          : null;
-      
-      const checkOutDate = bookingData.checkOut?.toDate 
-        ? bookingData.checkOut.toDate() 
-        : bookingData.checkOut 
-          ? new Date(bookingData.checkOut) 
-          : null;
-      
-      const createdAtDate = bookingData.createdAt?.toDate 
-        ? bookingData.createdAt.toDate() 
-        : bookingData.createdAt 
-          ? new Date(bookingData.createdAt) 
-          : new Date();
-
-      const cancelledAtDate = bookingData.cancelledAt?.toDate 
-        ? bookingData.cancelledAt.toDate() 
-        : bookingData.cancelledAt 
-          ? new Date(bookingData.cancelledAt) 
-          : null;
+      // Convert dates using utility function for consistent parsing
+      const checkInDate = parseDate(bookingData.checkIn);
+      const checkOutDate = parseDate(bookingData.checkOut);
+      const createdAtDate = parseDate(bookingData.createdAt) || new Date();
+      const cancelledAtDate = parseDate(bookingData.cancelledAt);
 
       const bookingWithDates = {
         id: bookingSnap.id,
@@ -188,8 +170,15 @@ const BookingDetails = () => {
     }
     
     const now = new Date();
-    const checkIn = booking.checkIn instanceof Date ? booking.checkIn : new Date(booking.checkIn);
-    const checkOut = booking.checkOut instanceof Date ? booking.checkOut : new Date(booking.checkOut);
+    const checkIn = parseDate(booking.checkIn);
+    const checkOut = parseDate(booking.checkOut);
+    
+    if (!checkIn || !checkOut) {
+      // Handle bookings without dates (services/experiences)
+      if (booking.status === 'confirmed' || booking.status === 'completed') return 'active';
+      if (booking.status === 'pending' || booking.status === 'reserved') return 'upcoming';
+      return 'past';
+    }
 
     if (now < checkIn) return 'upcoming';
     if (now >= checkIn && now <= checkOut) return 'active';
@@ -211,11 +200,13 @@ const BookingDetails = () => {
     }
     
     // Check if booking has dates
-    if (booking.checkIn && booking.checkOut) {
-      const checkOut = booking.checkOut instanceof Date ? booking.checkOut : new Date(booking.checkOut);
+    const checkInDate = parseDate(booking.checkIn);
+    const checkOutDate = parseDate(booking.checkOut);
+    
+    if (checkInDate && checkOutDate) {
       const now = new Date();
       // Booking is completed if checkout date has passed
-      isCompleted = now > checkOut;
+      isCompleted = now > checkOutDate;
     } else {
       // For services/experiences without dates, check status
       isCompleted = booking.status === 'confirmed' || booking.status === 'completed';
@@ -593,37 +584,10 @@ const BookingDetails = () => {
     }
   };
 
-  const formatDate = (date) => {
-    if (!date) return 'N/A';
-    const dateObj = date instanceof Date ? date : new Date(date);
-    if (isNaN(dateObj.getTime())) return 'Invalid Date';
-    return dateObj.toLocaleDateString('en-US', {
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  };
-
-  const formatDateTime = (date) => {
-    if (!date) return 'N/A';
-    const dateObj = date instanceof Date ? date : new Date(date);
-    if (isNaN(dateObj.getTime())) return 'Invalid Date';
-    return dateObj.toLocaleDateString('en-US', {
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit'
-    });
-  };
-
-  const calculateNights = (checkIn, checkOut) => {
-    if (!checkIn || !checkOut) return 0;
-    const checkInDate = checkIn instanceof Date ? checkIn : new Date(checkIn);
-    const checkOutDate = checkOut instanceof Date ? checkOut : new Date(checkOut);
-    const diff = checkOutDate - checkInDate;
-    return Math.ceil(diff / (1000 * 60 * 60 * 24));
-  };
+  // Use utility functions for consistent date formatting
+  const formatDate = formatDateUtil;
+  const formatDateTime = formatDateTimeUtil;
+  const calculateNights = calculateNightsUtil;
 
   if (!user) {
     return (

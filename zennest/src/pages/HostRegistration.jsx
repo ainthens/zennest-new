@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
+import { PayPalScriptProvider, PayPalButtons, usePayPalScriptReducer } from '@paypal/react-paypal-js';
 import Loading from '../components/Loading';
 import { auth } from '../config/firebase';
 import { updateSubscriptionStatus } from '../services/firestoreService';
@@ -22,6 +22,62 @@ import {
   FaCrown,
   FaCheckCircle
 } from 'react-icons/fa';
+
+// PayPal Buttons Wrapper with loading state detection
+const PayPalButtonsWrapper = ({ createOrder, onApprove, onError, onCancel, style, disabled }) => {
+  const [{ isPending, isResolved, isRejected }] = usePayPalScriptReducer();
+
+  // Show loading state
+  if (isPending) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <div className="text-center">
+          <div className="w-8 h-8 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+          <p className="text-sm text-gray-600">Loading PayPal...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error if SDK failed to load
+  if (isRejected) {
+    return (
+      <div className="p-4 bg-red-50 border-2 border-red-200 rounded-lg">
+        <p className="text-sm text-red-700 font-semibold mb-2">
+          ⚠️ Failed to load PayPal payment system
+        </p>
+        <p className="text-xs text-red-600 mb-3">
+          Please check your internet connection and try refreshing the page. If the problem persists, contact support.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="text-xs px-3 py-1.5 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+        >
+          Refresh Page
+        </button>
+      </div>
+    );
+  }
+
+  // Render buttons when SDK is loaded
+  if (isResolved) {
+    return (
+      <PayPalButtons
+        createOrder={createOrder}
+        onApprove={onApprove}
+        onError={onError}
+        onCancel={onCancel}
+        onInit={(data, actions) => {
+          console.log('✅ PayPal buttons initialized:', data);
+        }}
+        style={style}
+        disabled={disabled}
+      />
+    );
+  }
+
+  return null;
+};
 
 const HostRegistration = () => {
   const navigate = useNavigate();
@@ -1012,10 +1068,18 @@ const HostRegistration = () => {
                         'client-id': import.meta.env.VITE_PAYPAL_CLIENT_ID,
                         currency: 'PHP',
                         intent: 'capture',
-                        components: 'buttons,card'
+                        components: 'buttons' // Use only 'buttons' - 'buttons,card' can cause 400 errors
+                      }}
+                      onLoadStart={() => {
+                        console.log('🔄 PayPal SDK loading started...');
+                        console.log('🔑 Client ID:', import.meta.env.VITE_PAYPAL_CLIENT_ID ? 'Found' : 'Missing');
+                      }}
+                      onLoadError={(error) => {
+                        console.error('❌ PayPal SDK failed to load:', error);
+                        setError('Failed to load PayPal payment system. Please refresh the page or contact support.');
                       }}
                     >
-                      <PayPalButtons
+                      <PayPalButtonsWrapper
                         createOrder={createPayPalOrder}
                         onApprove={onApprovePayPalOrder}
                         onError={(err) => {

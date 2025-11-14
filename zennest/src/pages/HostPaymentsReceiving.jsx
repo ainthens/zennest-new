@@ -37,12 +37,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getHostBookings } from '../services/firestoreService';
-import { processPayPalPayout, verifyPayPalAccount } from '../services/paypalService';
+import { processPayPalPayout } from '../services/paypalService';
 import useAuth from '../hooks/useAuth';
 import {
   PayPalScriptProvider
 } from '@paypal/react-paypal-js';
-import PayPalLoginButton from '../components/PayPalLoginButton';
 import {
   FaPaypal,
   FaWallet,
@@ -54,9 +53,10 @@ import {
   FaChartLine,
   FaExclamationCircle,
   FaTimes,
-  FaSpinner
+  FaSpinner,
+  FaGift
 } from 'react-icons/fa';
-import { collection, addDoc, query, where, orderBy, getDocs, updateDoc, doc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { collection, addDoc, query, where, orderBy, getDocs, updateDoc, doc, serverTimestamp, getDoc, limit } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
 
@@ -64,9 +64,6 @@ const HostPaymentsReceiving = () => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [showCashOutModal, setShowCashOutModal] = useState(false);
-  const [showPayPalLoginModal, setShowPayPalLoginModal] = useState(false);
-  const [paypalLoginData, setPaypalLoginData] = useState(null);
-  const [paypalLoginError, setPaypalLoginError] = useState('');
   const [earnings, setEarnings] = useState({
     estimatedEarnings: 0, // Upcoming/confirmed bookings (projection only)
     totalEarnings: 0, // Completed bookings minus admin fee
@@ -78,25 +75,32 @@ const HostPaymentsReceiving = () => {
   });
   const [cashOutHistory, setCashOutHistory] = useState([]);
   const [cashOutAmount, setCashOutAmount] = useState('');
+  const [paypalEmail, setPaypalEmail] = useState(''); // PayPal email input
   const [processingCashOut, setProcessingCashOut] = useState(false);
   const [cashOutError, setCashOutError] = useState('');
   const [cashOutSuccess, setCashOutSuccess] = useState('');
-  const [pendingCashOutAmount, setPendingCashOutAmount] = useState(null); // Store amount when showing PayPal login
   const [showWithdrawalSuccessModal, setShowWithdrawalSuccessModal] = useState(false);
   const [withdrawalDetails, setWithdrawalDetails] = useState(null); // Store withdrawal success details
+  const [showClaimCreditModal, setShowClaimCreditModal] = useState(false);
+  const [creditCode, setCreditCode] = useState('');
+  const [claimingCredit, setClaimingCredit] = useState(false);
+  const [creditError, setCreditError] = useState('');
+  const [creditSuccess, setCreditSuccess] = useState('');
+  const [transactionHistory, setTransactionHistory] = useState([]);
 
   useEffect(() => {
     if (user) {
       fetchEarnings();
       fetchCashOutHistory();
+      fetchTransactionHistory();
       setLoading(false);
     }
   }, [user]);
 
   // Debug: Log environment variable (for troubleshooting)
   useEffect(() => {
-    const clientId = import.meta?.env?.VITE_PAYPAL_CLIENT_ID;
-    console.log('🔍 [HostPaymentsReceiving] PayPal Client ID:', clientId ? `✅ Found (${clientId.substring(0, 10)}...)` : '❌ Not found');
+    // The Client ID is provided by the wrapper component via PayPalScriptProvider
+    // So we don't need to check it here - it's already configured
     console.log('🔍 [HostPaymentsReceiving] Earnings available:', earnings.availableBalance);
     console.log('🔍 [HostPaymentsReceiving] Estimated earnings:', earnings.estimatedEarnings);
     console.log('🔍 [HostPaymentsReceiving] Total earnings:', earnings.totalEarnings);
@@ -106,6 +110,10 @@ const HostPaymentsReceiving = () => {
 
   const fetchEarnings = async () => {
     try {
+      if (!user || !user.uid) {
+        console.warn('No user available for fetching earnings');
+        return;
+      }
       const bookingsResult = await getHostBookings(user.uid);
       const bookings = bookingsResult.data || [];
 
@@ -271,8 +279,26 @@ const HostPaymentsReceiving = () => {
         }
       }
 
-      // Calculate available balance (total earnings minus cashed out amounts)
-      const availableBalance = Math.max(0, totalEarnings - totalCashedOut);
+      // Calculate total credits claimed (E-wallet credits)
+      let totalCredits = 0;
+      try {
+        const creditsQuery = query(
+          collection(db, 'transactions'),
+          where('userId', '==', user.uid),
+          where('type', '==', 'credit'),
+          where('status', '==', 'completed')
+        );
+        const creditsSnapshot = await getDocs(creditsQuery);
+        creditsSnapshot.forEach((doc) => {
+          const credit = doc.data();
+          totalCredits += credit.amount || 0;
+        });
+      } catch (error) {
+        console.error('Error fetching credits:', error);
+      }
+
+      // Calculate available balance (total earnings + credits minus cashed out amounts)
+      const availableBalance = Math.max(0, totalEarnings + totalCredits - totalCashedOut);
 
       // Calculate this month's earnings (completed)
       const now = new Date();
@@ -366,6 +392,11 @@ const HostPaymentsReceiving = () => {
 
   const fetchCashOutHistory = async () => {
     try {
+      if (!user || !user.uid) {
+        console.warn('No user available for fetching cashout history');
+        setCashOutHistory([]);
+        return;
+      }
       const cashOutQuery = query(
         collection(db, 'cashOuts'),
         where('hostId', '==', user.uid),
@@ -414,49 +445,225 @@ const HostPaymentsReceiving = () => {
     }
   };
 
-  const handlePayPalLoginSuccess = async (paypalData) => {
+  const fetchTransactionHistory = async () => {
     try {
-      console.log('✅ PayPal login successful:', paypalData);
-      setPaypalLoginData(paypalData);
-      setPaypalLoginError('');
-      
-      // Verify the PayPal account (optional additional verification)
-      const verification = await verifyPayPalAccount(paypalData.email);
-      if (!verification.success) {
-        console.warn('⚠️ PayPal verification warning:', verification.error);
-        // Don't block the cashout if verification fails, since we got the info from PayPal login
+      if (!user || !user.uid) {
+        console.warn('No user available for fetching transaction history');
+        setTransactionHistory([]);
+        return;
       }
-      
-      // Close login modal
-      setShowPayPalLoginModal(false);
-      
-      // If there's a pending cashout amount, process it immediately
-      if (pendingCashOutAmount !== null) {
-        await processCashOut(paypalData, pendingCashOutAmount);
-        setPendingCashOutAmount(null);
+
+      const transactions = [];
+
+      // Get all bookings for this host
+      const bookingsResult = await getHostBookings(user.uid);
+      const bookings = bookingsResult.data || [];
+
+      // Admin fee percentage (5%)
+      const ADMIN_FEE_PERCENTAGE = 0.05;
+
+      // Helper function to calculate host earnings after admin fee
+      const calculateHostEarnings = (bookingTotal) => {
+        const adminFee = bookingTotal * ADMIN_FEE_PERCENTAGE;
+        const hostEarnings = bookingTotal - adminFee;
+        return { adminFee, hostEarnings };
+      };
+
+      // Helper function to get booking date
+      const getBookingDate = (booking) => {
+        if (!booking.checkIn) return null;
+        if (booking.checkIn.toDate && typeof booking.checkIn.toDate === 'function') {
+          return booking.checkIn.toDate();
+        }
+        if (booking.checkIn instanceof Date) {
+          return booking.checkIn;
+        }
+        return new Date(booking.checkIn);
+      };
+
+      // Helper function to get checkout date
+      const getCheckOutDate = (booking) => {
+        if (!booking.checkOut) return null;
+        if (booking.checkOut.toDate && typeof booking.checkOut.toDate === 'function') {
+          return booking.checkOut.toDate();
+        }
+        if (booking.checkOut instanceof Date) {
+          return booking.checkOut;
+        }
+        return new Date(booking.checkOut);
+      };
+
+      // Helper function to check if booking is completed
+      const isBookingCompleted = (booking) => {
+        if (booking.status === 'completed') {
+          return true;
+        }
+        
+        if (booking.status === 'confirmed') {
+          const checkOutDate = getCheckOutDate(booking);
+          if (checkOutDate) {
+            const now = new Date();
+            now.setHours(0, 0, 0, 0);
+            checkOutDate.setHours(0, 0, 0, 0);
+            return now > checkOutDate;
+          }
+          
+          if (!booking.checkIn && !booking.checkOut) {
+            return true;
+          }
+        }
+        
+        return false;
+      };
+
+      // Filter completed bookings and create transaction history
+      const bookingTransactions = bookings
+        .filter(b => isBookingCompleted(b))
+        .map(booking => {
+          const bookingTotal = booking.total || booking.totalAmount || 0;
+          const { adminFee, hostEarnings } = calculateHostEarnings(bookingTotal);
+          const completionDate = getCheckOutDate(booking) || getBookingDate(booking) || booking.updatedAt || booking.createdAt;
+          
+          return {
+            id: booking.id || `booking-${Date.now()}`,
+            type: 'booking',
+            bookingId: booking.id,
+            listingTitle: booking.listingTitle || 'Unknown Listing',
+            guestId: booking.guestId,
+            checkIn: getBookingDate(booking),
+            checkOut: getCheckOutDate(booking),
+            bookingTotal: bookingTotal,
+            adminFee: adminFee,
+            earnings: hostEarnings,
+            status: 'completed',
+            completedAt: completionDate,
+            createdAt: booking.createdAt || booking.updatedAt
+          };
+        });
+
+      transactions.push(...bookingTransactions);
+
+      // Fetch credit transactions (reward claims)
+      try {
+        const creditTransactionsQuery = query(
+          collection(db, 'transactions'),
+          where('userId', '==', user.uid),
+          where('type', '==', 'credit'),
+          where('status', '==', 'completed'),
+          orderBy('createdAt', 'desc')
+        );
+        const creditSnapshot = await getDocs(creditTransactionsQuery);
+        
+        // Get reward names from valid codes collection
+        const validCodesRef = collection(db, 'valid codes');
+        const codesQuery = query(
+          validCodesRef,
+          where('hostId', '==', user.uid),
+          where('redeemed', '==', true)
+        );
+        const codesSnapshot = await getDocs(codesQuery);
+        
+        // Create a map of code to reward name
+        const codeToRewardMap = new Map();
+        codesSnapshot.forEach((doc) => {
+          const codeData = doc.data();
+          if (codeData.code && codeData.reward) {
+            codeToRewardMap.set(codeData.code, codeData.reward);
+          }
+        });
+
+        creditSnapshot.forEach((doc) => {
+          const creditData = doc.data();
+          const rewardName = creditData.code ? codeToRewardMap.get(creditData.code) : null;
+          
+          transactions.push({
+            id: doc.id,
+            type: 'credit',
+            amount: creditData.amount || 0,
+            rewardName: rewardName || creditData.description || 'E-wallet Credit',
+            code: creditData.code || null,
+            createdAt: creditData.createdAt,
+            completedAt: creditData.createdAt // Use createdAt as completion date
+          });
+        });
+      } catch (creditError) {
+        console.error('Error fetching credit transactions:', creditError);
+        // If orderBy fails, try without it
+        if (creditError.code === 'failed-precondition' || creditError.message?.includes('index')) {
+          try {
+            const creditTransactionsQuery = query(
+              collection(db, 'transactions'),
+              where('userId', '==', user.uid),
+              where('type', '==', 'credit'),
+              where('status', '==', 'completed')
+            );
+            const creditSnapshot = await getDocs(creditTransactionsQuery);
+            
+            // Get reward names from valid codes collection
+            const validCodesRef = collection(db, 'valid codes');
+            const codesQuery = query(
+              validCodesRef,
+              where('hostId', '==', user.uid),
+              where('redeemed', '==', true)
+            );
+            const codesSnapshot = await getDocs(codesQuery);
+            
+            // Create a map of code to reward name
+            const codeToRewardMap = new Map();
+            codesSnapshot.forEach((doc) => {
+              const codeData = doc.data();
+              if (codeData.code && codeData.reward) {
+                codeToRewardMap.set(codeData.code, codeData.reward);
+              }
+            });
+
+            creditSnapshot.forEach((doc) => {
+              const creditData = doc.data();
+              const rewardName = creditData.code ? codeToRewardMap.get(creditData.code) : null;
+              
+              transactions.push({
+                id: doc.id,
+                type: 'credit',
+                amount: creditData.amount || 0,
+                rewardName: rewardName || creditData.description || 'E-wallet Credit',
+                code: creditData.code || null,
+                createdAt: creditData.createdAt,
+                completedAt: creditData.createdAt
+              });
+            });
+          } catch (fallbackError) {
+            console.error('Error in fallback credit query:', fallbackError);
+          }
+        }
       }
+
+      // Sort all transactions by date descending (most recent first)
+      transactions.sort((a, b) => {
+        const aTime = a.completedAt?.toDate ? a.completedAt.toDate().getTime() : 
+                     (a.completedAt instanceof Date ? a.completedAt.getTime() : 
+                     (a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0));
+        const bTime = b.completedAt?.toDate ? b.completedAt.toDate().getTime() : 
+                     (b.completedAt instanceof Date ? b.completedAt.getTime() : 
+                     (b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0));
+        return bTime - aTime;
+      });
+
+      setTransactionHistory(transactions);
     } catch (error) {
-      console.error('Error handling PayPal login:', error);
-      setPaypalLoginError('Failed to process PayPal login. Please try again.');
+      console.error('Error fetching transaction history:', error);
+      setTransactionHistory([]);
     }
   };
 
-  const handlePayPalLoginError = (error) => {
-    console.error('PayPal login error:', error);
-    setPaypalLoginError(error.message || 'Failed to connect PayPal account. Please try again.');
-    // Reset pending cashout amount on error
-    setPendingCashOutAmount(null);
-  };
-
-  // Process cashout after PayPal login
-  const processCashOut = async (paypalData, amount) => {
+  // Process cashout with PayPal email and amount
+  const processCashOut = async (email, amount) => {
     try {
       setProcessingCashOut(true);
       setCashOutError('');
       setCashOutSuccess('');
 
       console.log('🚀 Starting cashout process:', {
-        email: paypalData.email,
+        email: email,
         amount: amount,
         currency: 'PHP'
       });
@@ -465,7 +672,7 @@ const HostPaymentsReceiving = () => {
       let payoutResult;
       try {
         payoutResult = await processPayPalPayout(
-          paypalData.email,
+          email,
           amount,
           'PHP'
         );
@@ -491,10 +698,10 @@ const HostPaymentsReceiving = () => {
         currency: 'PHP',
         paymentMethod: {
           type: 'paypal',
-          accountName: paypalData.name || paypalData.email.split('@')[0],
-          paypalEmail: paypalData.email,
-          paypalAccountId: paypalData.payerId,
-          paypalName: paypalData.name || ''
+          accountName: email.split('@')[0], // Use email username as account name
+          paypalEmail: email,
+          paypalAccountId: '', // Not available without login
+          paypalName: '' // Not available without login
         },
         payoutBatchId: payoutResult.payoutBatchId,
         status: payoutResult.status === 'SUCCESS' ? 'completed' : 'processing',
@@ -513,10 +720,10 @@ const HostPaymentsReceiving = () => {
         currency: 'PHP',
         status: payoutResult.status === 'SUCCESS' ? 'completed' : 'processing',
         paymentMethod: 'paypal',
-        paypalEmail: paypalData.email,
+        paypalEmail: email,
         payoutBatchId: payoutResult.payoutBatchId,
         remainingBalance: remainingBalance,
-        description: `Cash out to PayPal - ${paypalData.email}`,
+        description: `Cash out to PayPal - ${email}`,
         cashOutId: cashOutRef.id,
         createdAt: serverTimestamp()
       });
@@ -524,18 +731,18 @@ const HostPaymentsReceiving = () => {
       // Refresh earnings after successful cashout
       await fetchEarnings();
       await fetchCashOutHistory();
+      await fetchTransactionHistory();
 
       // Store withdrawal details for success modal
       setWithdrawalDetails({
         amount: amount,
-        paypalEmail: paypalData.email,
+        paypalEmail: email,
         payoutBatchId: payoutResult.payoutBatchId,
         status: payoutResult.status,
         transactionId: payoutResult.transactionId
       });
 
-      // Close PayPal login modal and cashout modal
-      setShowPayPalLoginModal(false);
+      // Close cashout modal
       setShowCashOutModal(false);
       
       // Show withdrawal success modal
@@ -543,9 +750,8 @@ const HostPaymentsReceiving = () => {
       
       // Clear form data
       setCashOutAmount('');
+      setPaypalEmail('');
       setCashOutSuccess('');
-      setPaypalLoginData(null);
-      setPendingCashOutAmount(null);
     } catch (error) {
       console.error('❌ Error processing cash out:', {
         message: error.message,
@@ -556,11 +762,6 @@ const HostPaymentsReceiving = () => {
       const errorMessage = error.message || 'Failed to process cash out. Please try again.';
       setCashOutError(errorMessage);
       
-      // Close PayPal login modal and show error in cashout modal
-      setShowPayPalLoginModal(false);
-      setShowCashOutModal(true);
-      setPendingCashOutAmount(null);
-      
       // Keep error visible longer for debugging
       setTimeout(() => setCashOutError(''), 10000);
     } finally {
@@ -568,7 +769,22 @@ const HostPaymentsReceiving = () => {
     }
   };
 
-  const handleCashOut = () => {
+  const handleCashOut = async () => {
+    // Validate PayPal email
+    if (!paypalEmail || !paypalEmail.trim()) {
+      setCashOutError('Please enter your PayPal email address');
+      setTimeout(() => setCashOutError(''), 5000);
+      return;
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(paypalEmail.trim())) {
+      setCashOutError('Please enter a valid email address');
+      setTimeout(() => setCashOutError(''), 5000);
+      return;
+    }
+
     // Validate amount
     if (!cashOutAmount || parseFloat(cashOutAmount) <= 0) {
       setCashOutError('Please enter a valid amount');
@@ -590,11 +806,8 @@ const HostPaymentsReceiving = () => {
       return;
     }
 
-    // Store the amount and show PayPal login modal
-    setPendingCashOutAmount(amount);
-    setCashOutError('');
-    setShowCashOutModal(false); // Close cashout modal
-    setShowPayPalLoginModal(true); // Show PayPal login modal
+    // Process cashout directly with email and amount
+    await processCashOut(paypalEmail.trim(), amount);
   };
 
   const getMethodIcon = (type) => {
@@ -618,6 +831,102 @@ const HostPaymentsReceiving = () => {
         return 'bg-red-100 text-red-700';
       default:
         return 'bg-gray-100 text-gray-700';
+    }
+  };
+
+  const handleClaimCredit = async () => {
+    // Validate code input
+    if (!creditCode || !creditCode.trim()) {
+      setCreditError('Please enter a valid code');
+      setTimeout(() => setCreditError(''), 5000);
+      return;
+    }
+
+    const code = creditCode.trim().toUpperCase();
+
+    try {
+      setClaimingCredit(true);
+      setCreditError('');
+      setCreditSuccess('');
+
+      // Query the "valid codes" collection for the code
+      const validCodesRef = collection(db, 'valid codes');
+      const codeQuery = query(
+        validCodesRef,
+        where('code', '==', code),
+        limit(1)
+      );
+      const codeSnapshot = await getDocs(codeQuery);
+
+      if (codeSnapshot.empty) {
+        setCreditError('Invalid code. Please check and try again.');
+        setTimeout(() => setCreditError(''), 5000);
+        return;
+      }
+
+      const codeDoc = codeSnapshot.docs[0];
+      const codeData = codeDoc.data();
+
+      // Check if code is already redeemed
+      if (codeData.redeemed) {
+        setCreditError('This code has already been redeemed.');
+        setTimeout(() => setCreditError(''), 5000);
+        return;
+      }
+
+      // Check if code status is active
+      if (codeData.status !== 'active') {
+        setCreditError('This code is no longer valid.');
+        setTimeout(() => setCreditError(''), 5000);
+        return;
+      }
+
+      // Get credit value (default to 200 if not set)
+      const creditValue = codeData.creditValue || 200;
+
+      // Update the code document to mark it as redeemed
+      await updateDoc(doc(db, 'valid codes', codeDoc.id), {
+        redeemed: true,
+        redeemedAt: serverTimestamp(),
+        redeemedBy: user.uid,
+        status: 'redeemed'
+      });
+
+      // Add credit to host's earnings by creating a special transaction
+      // We'll add it directly to available balance by creating a credit transaction
+      await addDoc(collection(db, 'transactions'), {
+        userId: user.uid,
+        type: 'credit',
+        amount: creditValue,
+        currency: 'PHP',
+        status: 'completed',
+        paymentMethod: 'e-wallet',
+        description: `E-wallet credit claimed - Code: ${code}`,
+        code: code,
+        createdAt: serverTimestamp()
+      });
+
+      // Refresh earnings to update available balance
+      await fetchEarnings();
+      await fetchTransactionHistory();
+
+      // Show success message
+      setCreditSuccess(`Successfully claimed ₱${creditValue.toLocaleString()} credit!`);
+      
+      // Clear the code input
+      setCreditCode('');
+
+      // Close modal after 2 seconds
+      setTimeout(() => {
+        setShowClaimCreditModal(false);
+        setCreditSuccess('');
+      }, 2000);
+    } catch (error) {
+      console.error('Error claiming credit:', error);
+      setCreditError('Failed to claim credit. Please try again.');
+      setTimeout(() => setCreditError(''), 5000);
+    } finally {
+      setClaimingCredit(false);
     }
   };
 
@@ -657,14 +966,23 @@ const HostPaymentsReceiving = () => {
           {earnings.totalCashedOut > 0 && (
             <p className="text-xs text-emerald-300 mb-2">₱{earnings.totalCashedOut.toLocaleString()} cashed out</p>
           )}
-          <button
-            onClick={() => setShowCashOutModal(true)}
-            disabled={earnings.availableBalance === 0}
-            className="mt-2 w-full bg-white text-emerald-600 py-2 px-4 rounded-lg font-semibold hover:bg-emerald-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            <FaMoneyBillWave />
-            Cash Out
-          </button>
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={() => setShowCashOutModal(true)}
+              disabled={earnings.availableBalance === 0}
+              className="flex-1 bg-white text-emerald-600 py-2 px-4 rounded-lg font-semibold hover:bg-emerald-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              <FaMoneyBillWave />
+              Cash Out
+            </button>
+            <button
+              onClick={() => setShowClaimCreditModal(true)}
+              className="flex-1 bg-white text-blue-600 py-2 px-4 rounded-lg font-semibold hover:bg-blue-50 transition-colors flex items-center justify-center gap-2"
+            >
+              <FaGift />
+              Claim Credit
+            </button>
+          </div>
         </motion.div>
 
         <motion.div
@@ -713,6 +1031,152 @@ const HostPaymentsReceiving = () => {
           <p className="text-xs text-gray-500">5% fee on completed bookings</p>
         </motion.div>
       </div>
+
+      {/* Transaction History */}
+      {transactionHistory.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+              <FaHistory className="text-emerald-600" />
+              Transaction History
+            </h2>
+            <p className="text-sm text-gray-500">Completed bookings, reward claims, and earnings</p>
+          </div>
+          <div className="divide-y divide-gray-200">
+            {transactionHistory.slice(0, 10).map((transaction, index) => {
+              const completionDate = transaction.completedAt?.toDate 
+                ? transaction.completedAt.toDate() 
+                : (transaction.completedAt instanceof Date 
+                  ? transaction.completedAt 
+                  : (transaction.createdAt?.toDate 
+                    ? transaction.createdAt.toDate() 
+                    : new Date()));
+              
+              // Handle booking transactions
+              if (transaction.type === 'booking') {
+                const checkInDate = transaction.checkIn?.toDate 
+                  ? transaction.checkIn.toDate() 
+                  : (transaction.checkIn instanceof Date 
+                    ? transaction.checkIn 
+                    : null);
+                
+                const checkOutDate = transaction.checkOut?.toDate 
+                  ? transaction.checkOut.toDate() 
+                  : (transaction.checkOut instanceof Date 
+                    ? transaction.checkOut 
+                    : null);
+
+                return (
+                  <motion.div
+                    key={transaction.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                    className="p-6 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-4 flex-1">
+                      <div className="p-3 bg-emerald-100 rounded-lg">
+                        <FaCheckCircle className="text-2xl text-emerald-600" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-semibold text-gray-900">{transaction.listingTitle}</p>
+                        <p className="text-sm text-gray-600">
+                          Booking Completed
+                          {checkInDate && checkOutDate && (
+                            <span className="ml-2">
+                              • {checkInDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - {checkOutDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </span>
+                          )}
+                        </p>
+                        <div className="flex items-center gap-4 mt-1">
+                          <p className="text-xs text-gray-500">
+                            Completed: {completionDate.toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            Booking Total: ₱{transaction.bookingTotal.toLocaleString()}
+                          </p>
+                          <p className="text-xs text-red-500">
+                            Admin Fee (5%): -₱{transaction.adminFee.toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right ml-4">
+                      <p className="text-2xl font-bold text-emerald-600">
+                        +₱{transaction.earnings.toLocaleString()}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">Earnings</p>
+                    </div>
+                  </motion.div>
+                );
+              }
+
+              // Handle credit transactions (reward claims)
+              if (transaction.type === 'credit') {
+                return (
+                  <motion.div
+                    key={transaction.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                    className="p-6 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-4 flex-1">
+                      <div className="p-3 bg-blue-100 rounded-lg">
+                        <FaGift className="text-2xl text-blue-600" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-semibold text-gray-900">{transaction.rewardName}</p>
+                        <p className="text-sm text-gray-600">
+                          Reward Credit Claimed
+                          {transaction.code && (
+                            <span className="ml-2">• Code: {transaction.code}</span>
+                          )}
+                        </p>
+                        <div className="flex items-center gap-4 mt-1">
+                          <p className="text-xs text-gray-500">
+                            Claimed: {completionDate.toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </p>
+                          <p className="text-xs text-blue-600 font-medium">
+                            Added to wallet
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right ml-4">
+                      <p className="text-2xl font-bold text-blue-600">
+                        +₱{transaction.amount.toLocaleString()}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">Credit</p>
+                    </div>
+                  </motion.div>
+                );
+              }
+
+              return null;
+            })}
+          </div>
+          {transactionHistory.length > 10 && (
+            <div className="p-4 bg-gray-50 text-center">
+              <p className="text-sm text-gray-600">
+                Showing 10 of {transactionHistory.length} transactions
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Cash Out History */}
       {cashOutHistory.length > 0 && (
@@ -777,83 +1241,6 @@ const HostPaymentsReceiving = () => {
       )}
 
 
-      {/* PayPal Login Modal */}
-      <AnimatePresence>
-        {showPayPalLoginModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
-            onClick={(e) => {
-              if (e.target === e.currentTarget && !processingCashOut) {
-                setShowPayPalLoginModal(false);
-                setPaypalLoginError('');
-                setPendingCashOutAmount(null);
-              }
-            }}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                  <FaPaypal className="text-blue-600" />
-                  Login with PayPal
-                </h2>
-                {!processingCashOut && (
-                  <button
-                    onClick={() => {
-                      setShowPayPalLoginModal(false);
-                      setPaypalLoginError('');
-                      setPendingCashOutAmount(null);
-                    }}
-                    className="text-gray-400 hover:text-gray-600 transition-colors"
-                  >
-                    <FaTimes className="text-xl" />
-                  </button>
-                )}
-              </div>
-
-              {pendingCashOutAmount && (
-                <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-sm text-blue-800 font-medium mb-1">Cash Out Amount</p>
-                  <p className="text-2xl font-bold text-blue-900">₱{pendingCashOutAmount.toLocaleString()}</p>
-                  <p className="text-xs text-blue-600 mt-1">Please log in with PayPal to process your cashout</p>
-                </div>
-              )}
-
-              {paypalLoginError && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm text-red-700 flex items-center gap-2">
-                    <FaExclamationCircle />
-                    {paypalLoginError}
-                  </p>
-                </div>
-              )}
-
-              <div className="mb-4">
-                <PayPalLoginButton
-                  onSuccess={handlePayPalLoginSuccess}
-                  onError={handlePayPalLoginError}
-                />
-              </div>
-
-              <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-                <p className="text-xs text-gray-600 text-center">
-                  By logging in, you authorize ZenNest to send payouts to your PayPal account.
-                  Your PayPal account information will be used only for processing cashouts.
-                </p>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Cash Out Modal */}
       <AnimatePresence>
         {showCashOutModal && (
@@ -866,6 +1253,7 @@ const HostPaymentsReceiving = () => {
               if (e.target === e.currentTarget && !processingCashOut) {
                 setShowCashOutModal(false);
                 setCashOutAmount('');
+                setPaypalEmail('');
                 setCashOutError('');
                 setCashOutSuccess('');
               }
@@ -888,6 +1276,7 @@ const HostPaymentsReceiving = () => {
                     onClick={() => {
                       setShowCashOutModal(false);
                       setCashOutAmount('');
+                      setPaypalEmail('');
                       setCashOutError('');
                       setCashOutSuccess('');
                     }}
@@ -930,6 +1319,28 @@ const HostPaymentsReceiving = () => {
                       )}
                     </div>
 
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        PayPal Email Address *
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">
+                          <FaPaypal className="text-blue-600" />
+                        </span>
+                        <input
+                          type="email"
+                          value={paypalEmail}
+                          onChange={(e) => setPaypalEmail(e.target.value)}
+                          className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                          placeholder="your-email@example.com"
+                          disabled={processingCashOut}
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Enter your PayPal Sandbox personal account email
+                      </p>
+                    </div>
+
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
                         Amount to Cash Out *
@@ -962,9 +1373,9 @@ const HostPaymentsReceiving = () => {
                         <strong>Cash Out Information:</strong>
                       </p>
                       <ul className="text-xs text-blue-700 space-y-1 list-disc list-inside">
-                        <li>You will be redirected to PayPal Sandbox to log in</li>
-                        <li>Funds will be sent to your PayPal account</li>
-                        <li>Processing typically takes 3-5 business days</li>
+                        <li>Funds will be sent directly to your PayPal Sandbox account</li>
+                        <li>Make sure you enter the correct PayPal email address</li>
+                        <li>Processing typically takes a few moments in PayPal Sandbox</li>
                         <li>Currency: Philippine Peso (₱)</li>
                         <li>Minimum cash out amount: ₱100</li>
                       </ul>
@@ -976,6 +1387,8 @@ const HostPaymentsReceiving = () => {
                       onClick={handleCashOut}
                       disabled={
                         processingCashOut || 
+                        !paypalEmail || 
+                        !paypalEmail.trim() ||
                         !cashOutAmount || 
                         parseFloat(cashOutAmount) <= 0 || 
                         parseFloat(cashOutAmount) < 100 ||
@@ -991,7 +1404,7 @@ const HostPaymentsReceiving = () => {
                       ) : (
                         <>
                           <FaPaypal className="text-white" />
-                          Continue to PayPal Login
+                          Process Cash Out
                         </>
                       )}
                     </button>
@@ -1125,6 +1538,165 @@ const HostPaymentsReceiving = () => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Claim Credit Modal */}
+      <AnimatePresence>
+        {showClaimCreditModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+            onClick={(e) => {
+              if (e.target === e.currentTarget && !claimingCredit) {
+                setShowClaimCreditModal(false);
+                setCreditCode('');
+                setCreditError('');
+                setCreditSuccess('');
+              }
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                  <FaGift className="text-blue-600" />
+                  Claim E-wallet Credit
+                </h2>
+                {!claimingCredit && (
+                  <button
+                    onClick={() => {
+                      setShowClaimCreditModal(false);
+                      setCreditCode('');
+                      setCreditError('');
+                      setCreditSuccess('');
+                    }}
+                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    <FaTimes className="text-xl" />
+                  </button>
+                )}
+              </div>
+
+              {creditError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <p className="text-sm text-red-700 flex items-center gap-2">
+                    <FaExclamationCircle />
+                    {creditError}
+                  </p>
+                </div>
+              )}
+
+              {creditSuccess && (
+                <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                  <p className="text-sm text-emerald-700 flex items-center gap-2">
+                    <FaCheckCircle />
+                    {creditSuccess}
+                  </p>
+                </div>
+              )}
+
+              {!creditSuccess && (
+                <>
+                  <div className="mb-6">
+                    <p className="text-gray-600 text-sm mb-4">
+                      Enter your E-wallet credit code to claim the credit value. The credit will be added to your available balance.
+                    </p>
+
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Credit Code *
+                      </label>
+                      <input
+                        type="text"
+                        value={creditCode}
+                        onChange={(e) => setCreditCode(e.target.value.toUpperCase())}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 uppercase font-mono"
+                        placeholder="Enter code (e.g., ABC12345)"
+                        disabled={claimingCredit}
+                        maxLength={8}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Enter the 8-character code you received when redeeming the E-wallet Credit reward
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <p className="text-sm text-blue-800 mb-2 font-semibold">
+                        <strong>How to get a code:</strong>
+                      </p>
+                      <ul className="text-xs text-blue-700 space-y-1 list-disc list-inside">
+                        <li>Go to Points & Rewards page</li>
+                        <li>Redeem "E-wallet Credit (₱200)" for 30 points</li>
+                        <li>Copy the code from the alert message</li>
+                        <li>Enter it here to claim your credit</li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleClaimCredit}
+                      disabled={
+                        claimingCredit || 
+                        !creditCode || 
+                        !creditCode.trim()
+                      }
+                      className="flex-1 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {claimingCredit ? (
+                        <>
+                          <FaSpinner className="animate-spin text-white" />
+                          Claiming...
+                        </>
+                      ) : (
+                        <>
+                          <FaGift />
+                          Claim Credit
+                        </>
+                      )}
+                    </button>
+                    {!claimingCredit && (
+                      <button
+                        onClick={() => {
+                          setShowClaimCreditModal(false);
+                          setCreditCode('');
+                          setCreditError('');
+                          setCreditSuccess('');
+                        }}
+                        className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {creditSuccess && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => {
+                      setShowClaimCreditModal(false);
+                      setCreditCode('');
+                      setCreditError('');
+                      setCreditSuccess('');
+                    }}
+                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                  >
+                    Close
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
@@ -1132,18 +1704,21 @@ const HostPaymentsReceiving = () => {
 // Wrap the component with PayPalScriptProvider
 const HostPaymentsReceivingWrapper = () => {
   // Get PayPal Client ID from environment variables
-  const paypalClientId = import.meta?.env?.VITE_PAYPAL_CLIENT_ID || 'Aa1d32EXWKMFsgmQqm_Xri-h9FP6wDDQ4qqg2oLz2jjogpBxgBDLFdyksTZwooCQWVIy6qMXQwvULw-o';
+  // In Vite, use import.meta.env (process.env is not available in browser)
+  const paypalClientId = import.meta?.env?.VITE_PAYPAL_CLIENT_ID || 
+                         'Aa1d32EXWKMFsgmQqm_Xri-h9FP6wDDQ4qqg2oLz2jjogpBxgBDLFdyksTZwooCQWVIy6qMXQwvULw-o';
   
   // Debug: Log the client ID (remove in production)
-  React.useEffect(() => {
+  useEffect(() => {
     console.log('🔍 [HostPaymentsReceivingWrapper] PayPal Client ID:', paypalClientId ? `✅ Found (${paypalClientId.substring(0, 10)}...)` : '❌ Not found');
-    console.log('🔍 [HostPaymentsReceivingWrapper] All PAYPAL env vars:', Object.keys(import.meta?.env || {}).filter(key => key.includes('PAYPAL')));
-    if (!paypalClientId) {
-      console.warn('⚠️ PayPal Client ID not found. Please check:');
-      console.warn('   1. .env file exists in zennest/ directory');
-      console.warn('   2. VITE_PAYPAL_CLIENT_ID is set in .env file');
-      console.warn('   3. Development server was restarted after adding .env file');
-      console.warn('   4. No typos in variable name (must be VITE_PAYPAL_CLIENT_ID)');
+    console.log('🔍 [HostPaymentsReceivingWrapper] Client ID source:', {
+      fromImportMeta: !!import.meta?.env?.VITE_PAYPAL_CLIENT_ID,
+      usingFallback: paypalClientId === 'Aa1d32EXWKMFsgmQqm_Xri-h9FP6wDDQ4qqg2oLz2jjogpBxgBDLFdyksTZwooCQWVIy6qMXQwvULw-o',
+      allEnvKeys: Object.keys(import.meta?.env || {}).filter(key => key.includes('PAYPAL'))
+    });
+    if (!paypalClientId || paypalClientId === 'Aa1d32EXWKMFsgmQqm_Xri-h9FP6wDDQ4qqg2oLz2jjogpBxgBDLFdyksTZwooCQWVIy6qMXQwvULw-o') {
+      console.warn('⚠️ PayPal Client ID not found in environment. Using fallback value.');
+      console.warn('   To fix: Add VITE_PAYPAL_CLIENT_ID to your .env file and restart the dev server.');
     }
   }, [paypalClientId]);
 
@@ -1184,10 +1759,10 @@ const HostPaymentsReceivingWrapper = () => {
   return (
     <PayPalScriptProvider
       options={{
-        clientId: paypalClientId,
+        'client-id': paypalClientId,  // Use 'client-id' format (matches working components)
         currency: 'PHP',
         intent: 'capture',
-        locale: 'en_PH'
+        components: 'buttons'
       }}
     >
       <HostPaymentsReceiving />

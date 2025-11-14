@@ -60,7 +60,22 @@ export const processPayPalPayout = async (paypalEmail, amount, currency = 'PHP')
 
     // Call backend API endpoint for secure PayPal payout processing
     // The backend handles PayPal authentication and payout creation
-    const apiUrl = import.meta.env.VITE_API_URL || '/api/paypal/payout';
+    // Priority: VITE_API_URL > local server (dev) > deployed Vercel URL > relative path
+    const isDevelopment = import.meta.env.DEV || import.meta.env.MODE === 'development';
+    
+    // Check if custom API URL is set
+    let apiUrl;
+    if (import.meta.env.VITE_API_URL) {
+      apiUrl = import.meta.env.VITE_API_URL;
+    } else if (isDevelopment) {
+      // In development, use deployed Vercel URL (more reliable than local server)
+      // To use local server, start it with: npm run dev:api (in root directory)
+      // Then set VITE_API_URL=http://localhost:3001/api/paypal/payout in .env.local
+      apiUrl = 'https://zennest.vercel.app/api/paypal/payout';
+    } else {
+      // In production, use relative path (works when deployed on Vercel)
+      apiUrl = '/api/paypal/payout';
+    }
     
     console.log('💰 PayPal Payout Request:', {
       paypalEmail,
@@ -69,27 +84,73 @@ export const processPayPalPayout = async (paypalEmail, amount, currency = 'PHP')
       apiUrl
     });
 
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        paypalEmail,
-        amount,
-        currency
-      })
-    });
+    let response;
+    try {
+      response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          paypalEmail,
+          amount,
+          currency
+        })
+      });
+    } catch (fetchError) {
+      // Handle network errors (connection refused, etc.)
+      if (fetchError.message && fetchError.message.includes('Failed to fetch')) {
+        if (apiUrl.includes('localhost:3001')) {
+          throw new Error('Local API server is not running. Start it with: npm run dev:api (in root directory). Or use the deployed Vercel API.');
+        }
+        throw new Error('Failed to connect to API server. Please check your connection or try again later.');
+      }
+      throw fetchError;
+    }
 
     // Check if response is ok before parsing JSON
     let result;
+    const contentType = response.headers.get('content-type');
+    const isJson = contentType && contentType.includes('application/json');
+    
     try {
-      result = await response.json();
+      if (isJson) {
+        result = await response.json();
+      } else {
+        // If not JSON, read as text once
+        const text = await response.text();
+        console.error('Non-JSON response:', {
+          status: response.status,
+          statusText: response.statusText,
+          text: text.substring(0, 200) // Limit text length
+        });
+        
+        // Handle 404 - API endpoint not found
+        if (response.status === 404) {
+          const errorMsg = isDevelopment 
+            ? 'API endpoint not found. The backend API needs to be deployed to Vercel. If testing locally, ensure the API is running or use the deployed version.'
+            : 'API endpoint not found. Please contact support if this issue persists.';
+          throw new Error(errorMsg);
+        }
+        
+        throw new Error(`Server error: ${response.status} ${response.statusText}`);
+      }
     } catch (parseError) {
+      // If it's already our custom error, rethrow it
+      if (parseError.message && parseError.message.includes('API endpoint')) {
+        throw parseError;
+      }
+      
+      // Handle connection refused (local server not running)
+      if (parseError.message && parseError.message.includes('Failed to fetch')) {
+        if (apiUrl.includes('localhost:3001')) {
+          throw new Error('Local API server is not running. Start it with: npm run dev:api (in root directory). Or use the deployed Vercel API by setting VITE_API_URL in .env.local');
+        }
+        throw new Error('Failed to connect to API server. Please check your connection or try again later.');
+      }
+      
       console.error('Failed to parse response:', parseError);
-      const text = await response.text();
-      console.error('Response text:', text);
-      throw new Error(`Server error: ${response.status} ${response.statusText}`);
+      throw new Error(`Server error: ${response.status} ${response.statusText}. ${parseError.message}`);
     }
 
     if (!response.ok || !result.success) {
@@ -99,7 +160,7 @@ export const processPayPalPayout = async (paypalEmail, amount, currency = 'PHP')
         error: result.error,
         details: result.details
       });
-      throw new Error(result.error || result.message || 'Failed to process payout');
+      throw new Error(result.error || result.message || `Failed to process payout: ${response.status}`);
     }
 
     console.log('✅ PayPal Payout Response:', {

@@ -491,20 +491,20 @@ const HostListingForm = () => {
       return;
     }
 
-    // Basic validation (always required)
-    if (!formData.title.trim()) {
-      setError('Please enter a title for your listing');
-      setLoading(false);
-      return;
-    }
-    if (!formData.location.trim()) {
-      setError('Please enter a location for your listing');
-      setLoading(false);
-      return;
-    }
-
-    // Additional validation only required when publishing
+    // Validation only required when publishing
+    // Draft saves can be empty - allow saving without any fields filled
     if (publish) {
+      // Basic validation required for publishing
+      if (!formData.title.trim()) {
+        setError('Please enter a title for your listing');
+        setLoading(false);
+        return;
+      }
+      if (!formData.location.trim()) {
+        setError('Please enter a location for your listing');
+        setLoading(false);
+        return;
+      }
       if (!formData.rate || parseFloat(formData.rate) <= 0) {
         const rateLabel = formData.category === 'home' 
           ? 'rate per night' 
@@ -556,27 +556,28 @@ const HostListingForm = () => {
     }
 
     try {
-      // Clean up the data - remove empty strings and convert to proper types
+      // Clean up the data - allow empty strings for draft saves
       // Convert unavailableDates to Firestore Timestamps
       const unavailableDatesTimestamps = (formData.unavailableDates || []).map(dateStr => {
         const date = new Date(dateStr);
         return Timestamp.fromDate(date);
       });
       
+      // Build listing data - allow empty fields for drafts
       const listingData = {
-        title: formData.title.trim(),
+        title: (formData.title || '').trim(),
         category: formData.category || 'home',
         serviceCategory: formData.category === 'service' ? (formData.serviceCategory || 'other') : null,
-        description: formData.description.trim(),
-        location: formData.location.trim(),
+        description: (formData.description || '').trim(),
+        location: (formData.location || '').trim(),
         hostId: user.uid,
-        rate: parseFloat(formData.rate) || 0,
-        discount: parseFloat(formData.discount) || 0,
+        rate: formData.rate ? parseFloat(formData.rate) : 0,
+        discount: formData.discount ? parseFloat(formData.discount) : 0,
         bedrooms: formData.bedrooms ? parseInt(formData.bedrooms) : 0,
         bathrooms: formData.bathrooms ? parseFloat(formData.bathrooms) : 0,
         guests: formData.guests ? parseInt(formData.guests) : 0,
         images: formData.images || [],
-        promo: formData.promo?.trim() || '',
+        promo: (formData.promo || '').trim(),
         amenities: formData.amenities || [],
         unavailableDates: unavailableDatesTimestamps,
         status: publish ? 'published' : 'draft' // Explicitly set to 'draft' when not publishing
@@ -628,32 +629,38 @@ const HostListingForm = () => {
       
       setLoading(false);
 
-      // Don't navigate immediately - let success notification show
-      // User will see the notification and can navigate manually or wait for auto-navigation
-      if (isEdit) {
-        // For edits, update original data to reflect current state
-        setOriginalData({
-          title: listingData.title,
-          category: listingData.category,
-          serviceCategory: formData.serviceCategory || '',
-          description: listingData.description,
-          location: listingData.location,
-          rate: listingData.rate.toString(),
-          discount: listingData.discount.toString(),
-          promo: listingData.promo,
-          bedrooms: listingData.bedrooms.toString(),
-          bathrooms: listingData.bathrooms.toString(),
-          guests: listingData.guests.toString(),
-          images: listingData.images,
-          amenities: listingData.amenities,
-          unavailableDates: formData.unavailableDates
-        });
-      }
-      
-      // Auto-navigate after 3 seconds (giving time to see the success notification)
-      setTimeout(() => {
+      // For drafts, navigate immediately to listings page
+      // For published listings, show success notification first
+      if (!publish) {
+        // Draft saved - navigate immediately with refresh flag
         navigate('/host/listings', { state: { refresh: true } });
-      }, 3000);
+      } else {
+        // Published - show success notification, then navigate
+        if (isEdit) {
+          // For edits, update original data to reflect current state
+          setOriginalData({
+            title: listingData.title,
+            category: listingData.category,
+            serviceCategory: formData.serviceCategory || '',
+            description: listingData.description,
+            location: listingData.location,
+            rate: listingData.rate.toString(),
+            discount: listingData.discount.toString(),
+            promo: listingData.promo,
+            bedrooms: listingData.bedrooms.toString(),
+            bathrooms: listingData.bathrooms.toString(),
+            guests: listingData.guests.toString(),
+            images: listingData.images,
+            amenities: listingData.amenities,
+            unavailableDates: formData.unavailableDates
+          });
+        }
+        
+        // Auto-navigate after 3 seconds (giving time to see the success notification)
+        setTimeout(() => {
+          navigate('/host/listings', { state: { refresh: true } });
+        }, 3000);
+      }
     } catch (error) {
       console.error('Error saving listing:', error);
       console.error('Error details:', {
@@ -1034,7 +1041,14 @@ const HostListingForm = () => {
         )}
       </AnimatePresence>
 
-      <form onSubmit={(e) => handleSubmit(e, false)} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 md:p-8 space-y-8">
+      <form 
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleSubmit(e, false);
+        }} 
+        noValidate // Disable HTML5 validation to allow empty drafts
+        className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 md:p-8 space-y-8"
+      >
         {/* Category Selection */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-3">
@@ -1080,14 +1094,13 @@ const HostListingForm = () => {
         {/* Title */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Title *
+            Title <span className="text-xs text-gray-500 font-normal">(Required for publishing)</span>
           </label>
           <input
             type="text"
             name="title"
             value={formData.title}
             onChange={handleChange}
-            required
             placeholder="Enter listing title"
             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
           />
@@ -1096,7 +1109,7 @@ const HostListingForm = () => {
         {/* Location */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Location *
+            Location <span className="text-xs text-gray-500 font-normal">(Required for publishing)</span>
           </label>
           <div className="relative">
             <FaMapMarkerAlt className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
@@ -1105,7 +1118,6 @@ const HostListingForm = () => {
               name="location"
               value={formData.location}
               onChange={handleChange}
-              required
               placeholder="Enter location (e.g., Manila, Philippines)"
               className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
             />
