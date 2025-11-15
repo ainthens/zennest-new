@@ -6,7 +6,6 @@ import useAuth from '../hooks/useAuth';
 import { getHostProfile } from '../services/firestoreService';
 import ZennestHotingLogo from '../assets/zennest-hosting-logo.svg';
 import Loading from '../components/Loading';
-import RoleSwitcher from '../components/RoleSwitcher';
 import {
   FaHome,
   FaCalendarAlt,
@@ -458,11 +457,6 @@ const HostDashboard = () => {
                   {hostProfile.points || 0}
                 </span>
               </div>
-            </div>
-            
-            {/* Role Switcher */}
-            <div className="mb-2 sm:mb-3 w-full">
-              <RoleSwitcher variant="sidebar" />
             </div>
             
             <button

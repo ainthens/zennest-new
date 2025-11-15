@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { getHostListings, deleteListing } from '../services/firestoreService';
+import { getHostListings, softArchiveListing } from '../services/firestoreService';
 import useAuth from '../hooks/useAuth';
 import Loading from '../components/Loading';
 import {
@@ -66,14 +66,17 @@ const HostListings = () => {
     }
   };
 
+  // SAFETY: Use soft archive instead of hard delete to preserve data
+  // This prevents accidental data loss and allows recovery if needed
   const handleDelete = async (listingId) => {
-    if (window.confirm('Are you sure you want to delete this listing?')) {
+    if (window.confirm('Are you sure you want to archive this listing? It will be hidden but can be restored if needed.')) {
       try {
-        await deleteListing(listingId);
+        await softArchiveListing(listingId, 'archived-by-host');
+        // Remove from local state (listing is archived, not deleted)
         setListings(listings.filter(l => l.id !== listingId));
       } catch (error) {
-        console.error('Error deleting listing:', error);
-        alert('Failed to delete listing. Please try again.');
+        console.error('Error archiving listing:', error);
+        alert('Failed to archive listing. Please try again.');
       }
     }
   };

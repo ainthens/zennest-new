@@ -1,7 +1,7 @@
 // HomeStays.jsx
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { getPublishedListings, getUserFavorites, toggleFavorite } from "../services/firestoreService";
+import { getPublishedListings, getUserFavorites, toggleFavorite, getGuestProfile } from "../services/firestoreService";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../config/firebase";
 import HomeStayCard from "../components/HomeStayCard";
@@ -124,6 +124,18 @@ const HomeStays = () => {
   const [searchDate, setSearchDate] = useState(null);
   const [showGuestsDropdown, setShowGuestsDropdown] = useState(false);
   const guestsDropdownRef = useRef(null);
+  
+  // New state for suggested listings and listings near you
+  const [userProvince, setUserProvince] = useState('');
+  const [suggestedListings, setSuggestedListings] = useState([]);
+  const [listingsNearYou, setListingsNearYou] = useState([]);
+  
+  // Slider state for "Bookings Near Your Place"
+  const [nearYouSlideIndex, setNearYouSlideIndex] = useState(0);
+  const nearYouScrollRef = useRef(null);
+  
+  // Search state - controls visibility of Suggested and Near You sections
+  const [isSearching, setIsSearching] = useState(false);
 
   // HomeStay categories
   const homeStayCategories = ['apartment', 'house', 'villa', 'condo', 'studio', 'other'];
@@ -181,6 +193,42 @@ const HomeStays = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Fetch user profile to get province
+  useEffect(() => {
+    const fetchUserProvince = async () => {
+      if (!user?.uid) {
+        console.log('ℹ️ No user found - skipping province fetch');
+        return;
+      }
+
+      try {
+        console.log('🔍 Fetching user province for user:', user.uid);
+        const result = await getGuestProfile(user.uid);
+        console.log('📋 getGuestProfile result:', result);
+        
+        if (result.success && result.data) {
+          const province = (result.data.province || '').trim();
+          console.log('📍 User province from profile:', province);
+          if (province) {
+            setUserProvince(province);
+            console.log('✅ User province set to:', province);
+          } else {
+            console.log('⚠️ User profile found but province is empty');
+            setUserProvince('');
+          }
+        } else {
+          console.log('⚠️ Failed to fetch user profile or no data');
+          setUserProvince('');
+        }
+      } catch (error) {
+        console.error('❌ Error fetching user province:', error);
+        setUserProvince('');
+      }
+    };
+
+    fetchUserProvince();
+  }, [user]);
+
   // Fetch previous bookings for recommendations
   useEffect(() => {
     const fetchPreviousBookings = async () => {
@@ -227,8 +275,9 @@ const HomeStays = () => {
         if (result && result.success && result.data) {
           console.log(`✅ Found ${result.data.length} published listings`);
           
-          // Map Firestore data to match HomeStayCard format
-          const mappedListings = result.data.map(listing => {
+          // SAFETY: Normalize listings with safe defaults - never exclude listings due to missing province/coords
+          // All published listings should be visible even if province or coords are missing
+          const normalizedListings = result.data.map(listing => {
             // Convert unavailableDates from Firestore Timestamps to date strings (YYYY-MM-DD)
             let unavailableDates = [];
             if (listing.unavailableDates && Array.isArray(listing.unavailableDates)) {
@@ -257,7 +306,7 @@ const HomeStays = () => {
             return {
               id: listing.id,
               title: listing.title || 'Untitled Listing',
-              location: listing.location || '',
+              location: listing.location || 'Location not specified',
               pricePerNight: listing.rate || 0,
               discount: listing.discount || 0,
               rating: listing.rating || 0,
@@ -268,17 +317,70 @@ const HomeStays = () => {
               description: listing.description || '',
               images: listing.images || [],
               hostId: listing.hostId,
-              unavailableDates: unavailableDates
+              unavailableDates: unavailableDates,
+              // Include new fields with safe defaults - never exclude listings for missing fields
+              completedBookingsCount: listing.completedBookingsCount || 0,
+              province: (listing.province || '').trim(), // Empty string if missing
+              coords: listing.coords || null, // null if missing
+              status: listing.status || 'published', // Default to published
+              archived: listing.archived || false // Exclude archived listings
             };
-          });
+          }).filter(l => l.status === 'published' && !l.archived); // Only show published, non-archived listings
           
-          setListings(mappedListings);
-          console.log(`✅ Mapped ${mappedListings.length} listings successfully`);
+          setListings(normalizedListings);
+          console.log(`✅ Mapped ${normalizedListings.length} published listings (excluding archived)`);
+          console.log(`📊 Listings with province: ${normalizedListings.filter(l => l.province).length}, without: ${normalizedListings.filter(l => !l.province).length}`);
+
+          // Calculate Suggested Bookings (Top 3 by completedBookingsCount) - only published listings
+          const suggested = normalizedListings
+            .slice() // Copy array
+            .sort((a, b) => (b.completedBookingsCount || 0) - (a.completedBookingsCount || 0))
+            .slice(0, 3);
+          setSuggestedListings(suggested);
+          console.log(`✅ Calculated ${suggested.length} suggested listings`);
+
+          // SECTION 2: Calculate Listings Near You (province-based)
+          // These listings will ALSO appear in "List of All Bookings" - no filtering
+          if (userProvince) {
+            const normalizedUserProvince = userProvince.toLowerCase().trim();
+            console.log(`🔍 Filtering listings for province: "${userProvince}" (normalized: "${normalizedUserProvince}")`);
+            
+            // Get all unique provinces from listings for debugging
+            const allProvinces = [...new Set(normalizedListings.map(l => (l.province || '').toLowerCase().trim()).filter(Boolean))];
+            console.log(`📊 Available provinces in listings:`, allProvinces);
+            console.log(`📊 Total listings: ${normalizedListings.length}, Listings with province: ${normalizedListings.filter(l => l.province).length}`);
+            
+            const near = normalizedListings.filter(l => {
+              const listingProvince = (l.province || '').toLowerCase().trim();
+              // Exact match
+              const exactMatch = listingProvince && listingProvince === normalizedUserProvince;
+              // Also check if location string contains the province (fallback)
+              const locationMatch = l.location && l.location.toLowerCase().includes(normalizedUserProvince);
+              const matches = exactMatch || locationMatch;
+              
+              // Debug logging for first few listings
+              if (normalizedListings.indexOf(l) < 3) {
+                console.log(`  Listing "${l.title}": province="${l.province}" (normalized: "${listingProvince}"), location="${l.location}", exactMatch: ${exactMatch}, locationMatch: ${locationMatch}, final: ${matches}`);
+              }
+              
+              return matches;
+            });
+            
+            setListingsNearYou(near);
+            console.log(`✅ Found ${near.length} listings near you in ${userProvince}`);
+            
+            if (near.length === 0 && normalizedListings.filter(l => l.province).length > 0) {
+              console.warn(`⚠️ No matches found! User province: "${normalizedUserProvince}", Available provinces:`, allProvinces);
+            }
+          } else {
+            setListingsNearYou([]);
+            console.log('ℹ️ User province not set - skipping Listings Near You section');
+          }
 
           // Generate recommendations based on previous bookings
-          if (previousBookings.length > 0 && mappedListings.length > 0) {
+          if (previousBookings.length > 0 && normalizedListings.length > 0) {
             const recommendedLocations = [...new Set(previousBookings.map(b => b.location).filter(Boolean))];
-            const recommended = mappedListings
+            const recommended = normalizedListings
               .filter(listing => {
                 // Recommend listings in similar locations
                 return recommendedLocations.some(loc => 
@@ -308,7 +410,7 @@ const HomeStays = () => {
     };
 
     fetchListings();
-  }, [previousBookings]);
+  }, [previousBookings, userProvince]);
 
   // Fetch user favorites from Firestore
   useEffect(() => {
@@ -358,6 +460,54 @@ const HomeStays = () => {
     return Array.from(cats);
   }, [listings]);
 
+  // Filter listings for search results (only used when isSearching is true)
+  const searchedListings = useMemo(() => {
+    if (!isSearching) return [];
+    
+    const searchQuery = (filters.location || '').toLowerCase().trim();
+    if (!searchQuery && filters.guests === 0 && !checkIn) return [];
+    
+    return listings.filter((listing) => {
+      // Search by title
+      const titleMatch = listing.title && listing.title.toLowerCase().includes(searchQuery);
+      
+      // Search by province
+      const provinceMatch = listing.province && listing.province.toLowerCase().includes(searchQuery);
+      
+      // Search by location (full location string)
+      const locationMatch = listing.location && listing.location.toLowerCase().includes(searchQuery);
+      
+      // At least one field must match if search query exists
+      if (searchQuery) {
+        if (!titleMatch && !provinceMatch && !locationMatch) return false;
+      }
+      
+      // Filter by guests if specified
+      if (filters.guests > 0 && listing.guests && listing.guests < filters.guests) {
+        return false;
+      }
+      
+      // Filter by date availability if specified
+      if (checkIn) {
+        const formatDate = (date) => {
+          if (!date) return null;
+          const d = new Date(date);
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          return `${y}-${m}-${day}`;
+        };
+        const selected = formatDate(checkIn);
+        // If listing has this date as unavailable → EXCLUDE it
+        if (listing.unavailableDates && Array.isArray(listing.unavailableDates) && listing.unavailableDates.includes(selected)) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
+  }, [listings, filters, checkIn, isSearching]);
+
   const filtered = useMemo(() => {
     // Local date formatter to convert Date objects to YYYY-MM-DD strings
     const formatDate = (date) => {
@@ -368,6 +518,8 @@ const HomeStays = () => {
       return `${y}-${m}-${d}`;
     };
 
+    // CRITICAL: Do NOT filter out listings that appear in Suggested or Near You sections
+    // All listings must appear in "List of All Bookings" regardless of where else they appear
     let results = listings.filter((h) => {
       // Location search filter
       if (filters.location && !h.location.toLowerCase().includes(filters.location.toLowerCase())) return false;
@@ -431,16 +583,27 @@ const HomeStays = () => {
     return results;
   }, [listings, filters, checkIn, selectedCategory, priceRange]);
 
+  // Determine which listings to display: search results when searching, otherwise filtered listings
+  const displayListings = isSearching ? searchedListings : filtered;
+  
   // Pagination calculations
-  const totalPages = Math.ceil(filtered.length / itemsPerPage);
+  const totalPages = Math.ceil(displayListings.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
-  const paginatedListings = filtered.slice(startIndex, endIndex);
+  const paginatedListings = displayListings.slice(startIndex, endIndex);
 
-  // Reset to page 1 when filters change
+  // Reset to page 1 when filters change or search mode changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [filters, checkIn, selectedCategory, priceRange]);
+  }, [filters, checkIn, selectedCategory, priceRange, isSearching]);
+
+  // Reset isSearching when search inputs are cleared
+  useEffect(() => {
+    const hasSearchQuery = searchInputs.location.trim().length > 0 || searchInputs.guests > 0 || searchDate !== null;
+    if (!hasSearchQuery && isSearching) {
+      setIsSearching(false);
+    }
+  }, [searchInputs, searchDate, isSearching]);
 
   const handleToggleFavorite = async (id) => {
     if (!user?.uid) {
@@ -479,6 +642,7 @@ const HomeStays = () => {
     setPriceRange("all");
     setCheckIn(null);
     setSearchDate(null);
+    setIsSearching(false); // Reset search mode when clearing filters
   };
 
   const handleSearch = (e) => {
@@ -486,6 +650,10 @@ const HomeStays = () => {
       e.preventDefault();
       e.stopPropagation();
     }
+    
+    // Check if search is being performed (any search input has value)
+    const hasSearchQuery = searchInputs.location.trim().length > 0 || searchInputs.guests > 0 || searchDate !== null;
+    setIsSearching(hasSearchQuery);
     
     // Update filters with search input values when search button is clicked
     setFilters(prev => ({
@@ -692,37 +860,6 @@ const HomeStays = () => {
           </AnimatedSection>
         </div>
 
-        {/* Recommendations Section */}
-        {recommendations.length > 0 && user && (
-          <AnimatedSection className="mb-6 sm:mb-8">
-            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-2xl shadow-sm border border-emerald-200 p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-full bg-emerald-600 flex items-center justify-center">
-                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-gray-900">Recommended for You</h3>
-                  <p className="text-sm text-gray-600">Based on your previous bookings</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {recommendations.map((stay, index) => (
-                  <AnimatedCard key={stay.id} delay={index * 0.1}>
-                    <HomeStayCard
-                      stay={stay}
-                      onView={handleViewDetails}
-                      isFavorite={favorites.has(stay.id)}
-                      onToggleFavorite={() => handleToggleFavorite(stay.id)}
-                    />
-                  </AnimatedCard>
-                ))}
-              </div>
-            </div>
-          </AnimatedSection>
-        )}
-
         {/* Filters Section - Category and Price Range Only */}
         <AnimatedSection id="filters-section" className="mb-6 sm:mb-8">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
@@ -761,7 +898,7 @@ const HomeStays = () => {
             {(filters.location || filters.guests > 0 || checkIn || selectedCategory !== 'all' || priceRange !== 'all') && (
               <div className="mt-4 flex items-center justify-between pt-4 border-t border-gray-200">
                 <div className="text-sm text-gray-600">
-                  Showing {filtered.length} of {listings.length} homestays
+                  Showing {isSearching ? searchedListings.length : filtered.length} of {listings.length} homestays
                 </div>
                 <button
                   onClick={clearAllFilters}
@@ -774,6 +911,192 @@ const HomeStays = () => {
           </div>
         </AnimatedSection>
 
+        {/* SECTION 1: Suggested Bookings - Top 3 by completedBookingsCount */}
+        {/* Only show when NOT searching */}
+        {!isSearching && suggestedListings.length > 0 && (
+          <AnimatedSection className="mb-6 sm:mb-8">
+            <div className="mb-4">
+              <h2 className="text-2xl font-semibold text-gray-900 mb-2">Suggested Bookings</h2>
+              <p className="text-sm text-gray-600">Most popular stays based on completed bookings</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+              {suggestedListings.map((stay, index) => (
+                <AnimatedCard key={stay.id} delay={index * 0.1}>
+                  <HomeStayCard
+                    stay={stay}
+                    onView={handleViewDetails}
+                    isFavorite={favorites.has(stay.id)}
+                    onToggleFavorite={() => handleToggleFavorite(stay.id)}
+                  />
+                </AnimatedCard>
+              ))}
+            </div>
+          </AnimatedSection>
+        )}
+
+        {/* SECTION 2: Bookings Near Your Place - Province-based with slider if >3 */}
+        {/* Only show when NOT searching */}
+        {!isSearching && userProvince && (
+          <AnimatedSection className="mb-6 sm:mb-8">
+            <div className="mb-4">
+              <h2 className="text-2xl font-semibold text-gray-900 mb-2">Bookings near your place</h2>
+              <p className="text-sm text-gray-600">Stays in {userProvince}</p>
+            </div>
+            
+            {listingsNearYou.length === 0 ? (
+              <div className="bg-gray-50 rounded-xl p-8 text-center border border-gray-200">
+                <p className="text-gray-600">No nearby home stays found based on your location.</p>
+              </div>
+            ) : listingsNearYou.length > 3 ? (
+              // Horizontal slider for more than 3 listings
+              <div className="relative">
+                {/* Previous button */}
+                {nearYouSlideIndex > 0 && (
+                  <button
+                    onClick={() => {
+                      const newIndex = nearYouSlideIndex - 1;
+                      setNearYouSlideIndex(newIndex);
+                      if (nearYouScrollRef.current) {
+                        nearYouScrollRef.current.scrollTo({
+                          left: newIndex * nearYouScrollRef.current.clientWidth,
+                          behavior: "smooth",
+                        });
+                      }
+                    }}
+                    className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white rounded-full shadow-lg p-3 hover:bg-gray-50 transition-colors border border-gray-200"
+                    aria-label="Previous"
+                  >
+                    <FaChevronLeft className="w-5 h-5 text-gray-700" />
+                  </button>
+                )}
+
+                {/* Scrollable container */}
+                <div
+                  ref={nearYouScrollRef}
+                  className="flex overflow-x-auto scroll-smooth snap-x snap-mandatory gap-6 pb-4 no-scrollbar"
+                  style={{
+                    scrollbarWidth: 'none',
+                    msOverflowStyle: 'none'
+                  }}
+                  onScroll={(e) => {
+                    const scrollLeft = e.target.scrollLeft;
+                    const clientWidth = e.target.clientWidth;
+                    const maxIndex = Math.ceil(listingsNearYou.length / 3) - 1;
+                    const currentIndex = Math.round(scrollLeft / clientWidth);
+                    if (currentIndex !== nearYouSlideIndex && currentIndex <= maxIndex) {
+                      setNearYouSlideIndex(currentIndex);
+                    }
+                  }}
+                >
+                  {listingsNearYou.map((stay, index) => (
+                    <div
+                      key={stay.id}
+                      className="min-w-[calc(33.333%-1rem)] sm:min-w-[calc(33.333%-1rem)] flex-shrink-0 snap-start"
+                    >
+                      <AnimatedCard delay={index * 0.05}>
+                        <HomeStayCard
+                          stay={stay}
+                          onView={handleViewDetails}
+                          isFavorite={favorites.has(stay.id)}
+                          onToggleFavorite={() => handleToggleFavorite(stay.id)}
+                        />
+                      </AnimatedCard>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Next button */}
+                {listingsNearYou.length > 3 && 
+                 nearYouSlideIndex < Math.ceil(listingsNearYou.length / 3) - 1 && (
+                  <button
+                    onClick={() => {
+                      const maxIndex = Math.ceil(listingsNearYou.length / 3) - 1;
+                      if (nearYouSlideIndex < maxIndex) {
+                        const newIndex = nearYouSlideIndex + 1;
+                        setNearYouSlideIndex(newIndex);
+                        if (nearYouScrollRef.current) {
+                          nearYouScrollRef.current.scrollTo({
+                            left: newIndex * nearYouScrollRef.current.clientWidth,
+                            behavior: "smooth",
+                          });
+                        }
+                      }
+                    }}
+                    className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white rounded-full shadow-lg p-3 hover:bg-gray-50 transition-colors border border-gray-200"
+                    aria-label="Next"
+                  >
+                    <FaChevronRight className="w-5 h-5 text-gray-700" />
+                  </button>
+                )}
+              </div>
+            ) : (
+              // Grid layout for 3 or fewer listings
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                {listingsNearYou.map((stay, index) => (
+                  <AnimatedCard key={stay.id} delay={index * 0.1}>
+                    <HomeStayCard
+                      stay={stay}
+                      onView={handleViewDetails}
+                      isFavorite={favorites.has(stay.id)}
+                      onToggleFavorite={() => handleToggleFavorite(stay.id)}
+                    />
+                  </AnimatedCard>
+                ))}
+              </div>
+            )}
+          </AnimatedSection>
+        )}
+
+        {/* Recommendations Section - Keep for backward compatibility */}
+        {recommendations.length > 0 && user && (
+          <AnimatedSection className="mb-6 sm:mb-8">
+            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-2xl shadow-sm border border-emerald-200 p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-emerald-600 flex items-center justify-center">
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Recommended for You</h3>
+                  <p className="text-sm text-gray-600">Based on your previous bookings</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {recommendations.map((stay, index) => (
+                  <AnimatedCard key={stay.id} delay={index * 0.1}>
+                    <HomeStayCard
+                      stay={stay}
+                      onView={handleViewDetails}
+                      isFavorite={favorites.has(stay.id)}
+                      onToggleFavorite={() => handleToggleFavorite(stay.id)}
+                    />
+                  </AnimatedCard>
+                ))}
+              </div>
+            </div>
+          </AnimatedSection>
+        )}
+
+        {/* SECTION 3: List of All Bookings - Shows ALL listings (including duplicates from sections 1 & 2) */}
+        {/* When searching, show filtered results. When not searching, show all listings */}
+        <div className="mb-4">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+            {isSearching ? 'Search Results' : 'List of all bookings'}
+          </h2>
+          <p className="text-sm text-gray-600">
+            {isSearching 
+              ? `Found ${searchedListings.length} ${searchedListings.length === 1 ? 'result' : 'results'} for your search`
+              : 'Browse all available home stays'}
+          </p>
+          {/* Dev info - unhide to debug */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="text-xs text-gray-400 mt-2" id="dev-listing-counts">
+              Debug: total={listings.length}, suggested={suggestedListings.length}, nearYou={listingsNearYou.length}, filtered={filtered.length}, searched={searchedListings.length}, isSearching={isSearching ? 'true' : 'false'}
+            </div>
+          )}
+        </div>
+
         {/* Home Stays Grid */}
         <AnimatedGrid id="homestays-list" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {loading ? (
@@ -781,7 +1104,7 @@ const HomeStays = () => {
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600 mx-auto mb-4"></div>
               <p className="text-gray-600">Loading homestays...</p>
             </div>
-          ) : filtered.length === 0 ? (
+          ) : displayListings.length === 0 ? (
             <div className="col-span-full bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl shadow-inner p-16 text-center border-2 border-dashed border-gray-300">
               <div className="mb-6">
                 <div className="inline-flex items-center justify-center w-24 h-24 bg-white rounded-full shadow-lg mb-4">
@@ -820,7 +1143,7 @@ const HomeStays = () => {
         </AnimatedGrid>
 
         {/* Pagination */}
-        {filtered.length > itemsPerPage && (
+        {displayListings.length > itemsPerPage && (
           <div className="flex items-center justify-center gap-2 sm:gap-2 mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-gray-200 overflow-x-auto pb-2 sm:pb-0">
             <button
               onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
@@ -877,9 +1200,9 @@ const HomeStays = () => {
         )}
 
         {/* Results info */}
-        {filtered.length > 0 && (
+        {displayListings.length > 0 && (
           <div className="text-center mt-4 text-sm text-gray-600">
-            Showing {startIndex + 1} - {Math.min(endIndex, filtered.length)} of {filtered.length} home stays
+            Showing {startIndex + 1} - {Math.min(endIndex, displayListings.length)} of {displayListings.length} home stays
           </div>
         )}
       </div>

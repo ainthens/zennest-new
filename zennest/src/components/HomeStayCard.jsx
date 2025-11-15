@@ -22,7 +22,7 @@ const HomeStayCard = ({ stay, onView, isFavorite, onToggleFavorite }) => {
           <img
             src={stay.image}
             alt={stay.title}
-            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+            className="w-min h-min object-cover transition-transform duration-500 group-hover:scale-110"
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
@@ -76,14 +76,14 @@ const HomeStayCard = ({ stay, onView, isFavorite, onToggleFavorite }) => {
       </div>
 
       <div className="p-4 sm:p-5">
-        <h3 className="text-base sm:text-lg md:text-xl font-bold text-gray-900 line-clamp-2 leading-tight mb-2 sm:mb-3 group-hover:text-emerald-700 transition-colors">
+        <h3 className="text-base sm:text-md md:text-md font-bold text-gray-900 line-clamp-2 leading-tight mb-2 sm:mb-3 group-hover:text-emerald-700 transition-colors">
           {stay.title}
         </h3>
         
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 text-xs sm:text-sm text-gray-600 mb-3 sm:mb-4">
           <div className="flex items-center gap-1 min-w-0">
             <FaMapMarkerAlt className="text-emerald-500 text-xs flex-shrink-0" />
-            <span className="line-clamp-1 truncate">{stay.location}</span>
+            <span className="line-clamp-1 truncate">{stay.location || 'Location not specified'}</span>
           </div>
           <div className="flex items-center gap-1">
             <FaUserFriends className="text-emerald-500 text-xs flex-shrink-0" />

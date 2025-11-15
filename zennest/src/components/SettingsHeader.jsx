@@ -26,7 +26,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { getGuestProfile, getHostProfile } from "../services/firestoreService";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../config/firebase";
-import RoleSwitcher from "./RoleSwitcher";
 
 const SettingsHeader = () => {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -363,15 +362,6 @@ const SettingsHeader = () => {
                                   highlighted={mobileHighlightedIndex === 1}
                                   onHover={() => setMobileHighlightedIndex(1)}
                                 />
-                              )}
-                              {/* Role Switcher for Mobile */}
-                              {canSwitchRoles && (
-                                <>
-                                  <div className="h-px bg-gray-200 my-1"></div>
-                                  <div className="px-2 py-2">
-                                    <RoleSwitcher />
-                                  </div>
-                                </>
                               )}
                               <div className="h-px bg-gray-200 my-1"></div>
                               <MobileMenuItem
@@ -714,16 +704,6 @@ const SettingsHeader = () => {
                             </>
                           )}
                         </div>
-
-                        {/* Role Switcher (only show if user has both roles) */}
-                        {canSwitchRoles && (
-                          <>
-                            <div className="h-px bg-gray-200"></div>
-                            <div className="p-2">
-                              <RoleSwitcher />
-                            </div>
-                          </>
-                        )}
 
                         <div className="h-px bg-gray-200"></div>
 

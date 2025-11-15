@@ -364,12 +364,23 @@ export const getPublishedListings = async (category = null) => {
       const listings = [];
       querySnapshot.forEach((doc) => {
         const data = doc.data();
+        // SAFETY: Exclude archived listings from published listings query
+        // Never exclude listings due to missing province/coords - they are optional fields
+        if (data.archived || data.status === 'archived') {
+          return; // Skip archived listings
+        }
         listings.push({ 
           id: doc.id, 
           ...data,
           // Handle Timestamp conversion for display
           createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt || new Date(0),
-          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt
+          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt,
+          // Include new fields: completedBookingsCount, province, coords
+          // All fields have safe defaults - listings are valid even if these are missing
+          completedBookingsCount: data.completedBookingsCount || 0,
+          province: (data.province || '').trim(), // Empty string if missing
+          coords: data.coords || null, // null if missing
+          archived: data.archived || false
         });
       });
       return { success: true, data: listings };
@@ -397,12 +408,23 @@ export const getPublishedListings = async (category = null) => {
         const listings = [];
         querySnapshot.forEach((doc) => {
           const data = doc.data();
+          // SAFETY: Exclude archived listings from published listings query
+          // Never exclude listings due to missing province/coords - they are optional fields
+          if (data.archived || data.status === 'archived') {
+            return; // Skip archived listings
+          }
           listings.push({ 
             id: doc.id, 
             ...data,
             // Handle Timestamp conversion for display
             createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt || new Date(0),
-            updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt
+            updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt,
+            // Include new fields: completedBookingsCount, province, coords
+            // All fields have safe defaults - listings are valid even if these are missing
+            completedBookingsCount: data.completedBookingsCount || 0,
+            province: (data.province || '').trim(), // Empty string if missing
+            coords: data.coords || null, // null if missing
+            archived: data.archived || false
           });
         });
         
@@ -424,10 +446,39 @@ export const getPublishedListings = async (category = null) => {
   }
 };
 
-export const deleteListing = async (listingId) => {
+// Soft archive a listing instead of deleting it
+// This preserves data and allows recovery if needed
+export const softArchiveListing = async (listingId, reason = 'archived-by-user') => {
   try {
     const listingRef = doc(db, 'listings', listingId);
+    await updateDoc(listingRef, {
+      archived: true,
+      archivedAt: serverTimestamp(),
+      archivedReason: reason,
+      status: 'archived' // Change status to archived
+    });
+    console.log(`✅ Listing ${listingId} soft-archived with reason: ${reason}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Error soft-archiving listing:', error);
+    throw error;
+  }
+};
+
+// Hard delete listing - USE WITH EXTREME CAUTION
+// Only use when absolutely necessary (e.g., GDPR compliance, legal requirement)
+// Prefer softArchiveListing for normal operations
+export const deleteListing = async (listingId, forceDelete = false) => {
+  try {
+    // SAFETY: Require explicit forceDelete flag to prevent accidental deletions
+    if (!forceDelete) {
+      console.warn('⚠️ deleteListing called without forceDelete=true. Use softArchiveListing instead.');
+      throw new Error('Delete operation requires forceDelete=true. Use softArchiveListing for safe archiving.');
+    }
+    
+    const listingRef = doc(db, 'listings', listingId);
     await deleteDoc(listingRef);
+    console.log(`⚠️ Listing ${listingId} permanently deleted (forceDelete=true)`);
     return { success: true };
   } catch (error) {
     console.error('Error deleting listing:', error);
@@ -1389,6 +1440,8 @@ export const getGuestProfile = async (userId) => {
         hasProfilePicture: !!data.profilePicture,
         hasEmail: !!data.email,
         hasDisplayName: !!data.displayName,
+        hasProvince: !!data.province,
+        province: data.province || '(not set)',
         allFields: Object.keys(data)
       });
       return { success: true, data: data };
@@ -2588,9 +2641,11 @@ export const deleteHostAccount = async (userId) => {
     const listingsResult = await getHostListings(userId);
     const listings = listingsResult.success ? listingsResult.data : [];
 
-    // Delete all listings
-    const deleteListingPromises = listings.map(listing => deleteListing(listing.id));
-    await Promise.all(deleteListingPromises);
+    // SAFETY: Use soft archive instead of hard delete when deleting host account
+    // This preserves data and allows recovery if needed
+    // Only use hard delete (forceDelete=true) if absolutely necessary (e.g., GDPR compliance)
+    const archiveListingPromises = listings.map(listing => softArchiveListing(listing.id, 'archived-by-host-account-deletion'));
+    await Promise.all(archiveListingPromises);
 
     // Delete host profile
     const hostRef = doc(db, 'hosts', userId);

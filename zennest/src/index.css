@@ -6,6 +6,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Hide scrollbar for slider */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 /* set base to use Tailwind's sans (now Poppins) */
 @layer base {
   html {

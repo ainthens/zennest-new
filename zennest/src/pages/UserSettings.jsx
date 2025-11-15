@@ -62,6 +62,7 @@ const UserSettings = () => {
     phone: '',
     bio: '',
     address: '',
+    province: '',
     profilePicture: '',
     emailNotifications: true,
     smsNotifications: false,
@@ -128,6 +129,7 @@ const UserSettings = () => {
           phone: data.phone || '',
           bio: data.bio || '',
           address: data.address || '',
+          province: data.province || '',
           profilePicture: data.profilePicture || '',
           emailNotifications: data.emailNotifications !== false,
           smsNotifications: data.smsNotifications || false,
@@ -154,6 +156,7 @@ const UserSettings = () => {
             phone: data.phone || '',
             bio: data.bio || '',
             address: data.address || '',
+            province: data.province || '',
             profilePicture: data.profilePicture || user.photoURL || '',
             emailNotifications: data.emailNotifications !== false,
             smsNotifications: data.smsNotifications || false,
@@ -311,6 +314,7 @@ const UserSettings = () => {
         phone: formData.phone?.trim() || '',
         bio: formData.bio?.trim() || '',
         address: formData.address?.trim() || '',
+        province: formData.province?.trim() || '',
         emailNotifications: formData.emailNotifications,
         smsNotifications: formData.smsNotifications,
         marketingEmails: formData.marketingEmails,
@@ -900,9 +904,60 @@ const UserSettings = () => {
                       onChange={(value) => handleFieldChange('address', value)}
                       onBlur={() => handleFieldBlur('address')}
                       disabled={!isEditing}
-                      placeholder="Street address, City, Province..."
+                      placeholder="Street address, City..."
                       icon={FaMapMarkerAlt}
                     />
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2" style={{ fontFamily: 'Poppins, sans-serif' }}>
+                        Province
+                      </label>
+                      <select
+                        value={formData.province}
+                        onChange={(e) => handleFieldChange('province', e.target.value)}
+                        onBlur={() => handleFieldBlur('province')}
+                        disabled={!isEditing}
+                        className={`
+                          w-full px-4 py-3 border-2 rounded-xl transition-all
+                          ${fieldErrors.province
+                            ? 'border-red-500 focus:border-red-600 bg-red-50'
+                            : isEditing
+                            ? 'border-gray-300 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100'
+                            : 'border-gray-200 bg-gray-50'
+                          }
+                          disabled:opacity-50 disabled:cursor-not-allowed
+                          focus:outline-none
+                        `}
+                        style={{ fontFamily: 'Poppins, sans-serif' }}
+                      >
+                        <option value="">Select Province</option>
+                        <option value="Metro Manila">Metro Manila</option>
+                        <option value="Bulacan">Bulacan</option>
+                        <option value="Cavite">Cavite</option>
+                        <option value="Laguna">Laguna</option>
+                        <option value="Rizal">Rizal</option>
+                        <option value="Pampanga">Pampanga</option>
+                        <option value="Batangas">Batangas</option>
+                        <option value="Quezon">Quezon</option>
+                        <option value="Nueva Ecija">Nueva Ecija</option>
+                        <option value="Tarlac">Tarlac</option>
+                        <option value="Zambales">Zambales</option>
+                        <option value="Bataan">Bataan</option>
+                        <option value="Aurora">Aurora</option>
+                        <option value="Albay">Albay</option>
+                        <option value="Cebu">Cebu</option>
+                        <option value="Davao del Sur">Davao del Sur</option>
+                        <option value="Iloilo">Iloilo</option>
+                        <option value="Negros Occidental">Negros Occidental</option>
+                        <option value="Pangasinan">Pangasinan</option>
+                        <option value="Other">Other</option>
+                      </select>
+                      {fieldErrors.province && (
+                        <p className="mt-2 text-xs text-red-600 flex items-center gap-1" style={{ fontFamily: 'Poppins, sans-serif' }}>
+                          <FaExclamationCircle className="w-3.5 h-3.5" />
+                          {fieldErrors.province}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </CollapsibleSection>
               )}

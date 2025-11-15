@@ -553,22 +553,48 @@ const PaymentProcessing = () => {
   };
 
   const completeWalletPayment = async (bookingId) => {
-    const walletRef = doc(db, 'wallets', user.uid);
-    const newBalance = walletBalance - finalTotal;
-    await updateDoc(walletRef, {
-      balance: newBalance,
-      updatedAt: serverTimestamp()
-    });
+    // Ensure balance is sufficient (double-check)
+    if (walletBalance < finalTotal) {
+      throw new Error('Insufficient wallet balance. Please top up your wallet.');
+    }
 
+    // Get current wallet balance from Firestore to ensure accuracy
+    const walletRef = doc(db, 'wallets', user.uid);
+    const walletSnap = await getDoc(walletRef);
+    const currentBalance = walletSnap.exists() ? (walletSnap.data().balance || 0) : 0;
+
+    // Final check before deduction
+    if (currentBalance < finalTotal) {
+      throw new Error('Insufficient wallet balance. Please top up your wallet.');
+    }
+
+    const newBalance = currentBalance - finalTotal;
+    
+    // Ensure balance doesn't go negative
+    if (newBalance < 0) {
+      throw new Error('Insufficient wallet balance. Please top up your wallet.');
+    }
+
+    // Update wallet balance
+    await setDoc(walletRef, {
+      userId: user.uid,
+      balance: newBalance,
+      currency: 'PHP',
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+
+    // Save transaction record
     const transactionsRef = collection(db, 'transactions');
     await addDoc(transactionsRef, {
       userId: user.uid,
       type: 'payment',
       amount: finalTotal,
       status: 'completed',
-      description: `Booking payment for ${listing.title}`,
-      paymentMethod: 'wallet',
+      description: `Booking payment for listing: ${listing.title}`,
+      paymentMethod: 'ewallet',
       bookingId: bookingId,
+      listingId: listing.id,
+      listingTitle: listing.title,
       voucherCode: selectedVoucher?.code || null,
       voucherDiscount: voucherDiscount || 0,
       createdAt: serverTimestamp()
@@ -807,7 +833,7 @@ const PaymentProcessing = () => {
     }
 
     if (paymentMethod === 'wallet' && walletBalance < finalTotal) {
-      alert('Insufficient wallet balance. Please top up your wallet.');
+      alert(`Insufficient wallet balance. Your current balance is ₱${walletBalance.toLocaleString()}, but you need ₱${finalTotal.toLocaleString()}. Please top up your wallet.`);
       return;
     }
 

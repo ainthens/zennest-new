@@ -1968,7 +1968,7 @@ const ListingDetails = () => {
                         </div>
                         <div className="bg-slate-50 rounded-xl p-3">
                           <p className="text-2xl font-bold text-emerald-600 mb-1">
-                            {listing.rating > 0 ? listing.rating.toFixed(1) : '5.0'}
+                            {listing.rating > 0 ? listing.rating.toFixed(1) : '0.0'}
                           </p>
                           <p className="text-xs text-gray-500 mb-1 font-medium">Rating</p>
                         </div>

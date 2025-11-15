@@ -63,10 +63,14 @@ L.Icon.Default.mergeOptions({
 });
 
 // Component to handle map click events
-function LocationMarker({ position, setPosition }) {
+function LocationMarker({ position, setPosition, onLocationSet }) {
   useMapEvents({
     click(e) {
-      setPosition([e.latlng.lat, e.latlng.lng]);
+      const newPosition = [e.latlng.lat, e.latlng.lng];
+      setPosition(newPosition);
+      if (onLocationSet) {
+        onLocationSet(newPosition);
+      }
     },
   });
 
@@ -98,6 +102,8 @@ const HostListingForm = () => {
     serviceCategory: '',
     description: '',
     location: '',
+    province: '',
+    coords: { lat: null, lng: null },
     rate: '',
     discount: '',
     promo: '',
@@ -162,6 +168,74 @@ const HostListingForm = () => {
     }
   }, [id, isEdit]);
 
+  // Helper function to extract province from address components
+  const extractProvince = (addressComponents) => {
+    // Common Philippine province patterns
+    const provincePatterns = [
+      'Metro Manila', 'Bulacan', 'Cavite', 'Laguna', 'Rizal', 'Pampanga',
+      'Batangas', 'Quezon', 'Nueva Ecija', 'Tarlac', 'Zambales', 'Bataan',
+      'Aurora', 'Albay', 'Cebu', 'Davao del Sur', 'Iloilo', 'Negros Occidental',
+      'Pangasinan'
+    ];
+    
+    // Try to find province in address components
+    const addressString = JSON.stringify(addressComponents).toLowerCase();
+    for (const province of provincePatterns) {
+      if (addressString.includes(province.toLowerCase())) {
+        return province;
+      }
+    }
+    
+    // Try to extract from display_name
+    if (addressComponents.display_name) {
+      for (const province of provincePatterns) {
+        if (addressComponents.display_name.toLowerCase().includes(province.toLowerCase())) {
+          return province;
+        }
+      }
+    }
+    
+    return '';
+  };
+
+  // Reverse geocode when map position is clicked
+  const handleMapLocationSet = async (position) => {
+    const [lat, lng] = position;
+    try {
+      // Reverse geocode to get address and province
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&addressdetails=1`
+      );
+      const data = await response.json();
+      
+      if (data && data.address) {
+        const province = extractProvince(data);
+        const addressString = data.display_name || `${data.address.city || ''}, ${data.address.state || ''}`.trim();
+        
+        // Update formData with location, province, and coords
+        setFormData(prev => ({
+          ...prev,
+          location: addressString || prev.location,
+          province: province || prev.province,
+          coords: { lat, lng }
+        }));
+      } else {
+        // If reverse geocode fails, just update coords
+        setFormData(prev => ({
+          ...prev,
+          coords: { lat, lng }
+        }));
+      }
+    } catch (error) {
+      console.error('Error reverse geocoding:', error);
+      // Still update coords even if reverse geocode fails
+      setFormData(prev => ({
+        ...prev,
+        coords: { lat, lng }
+      }));
+    }
+  };
+
   // Geocode location when it changes
   useEffect(() => {
     if (formData.location && formData.location.trim()) {
@@ -177,6 +251,16 @@ const HostListingForm = () => {
             const lon = parseFloat(data[0].lon);
             setMapPosition([lat, lon]);
             setMapZoom(13);
+            
+            // Extract province from geocoded data
+            const province = extractProvince(data[0]);
+            
+            // Update formData with province and coords
+            setFormData(prev => ({
+              ...prev,
+              province: province || prev.province, // Keep existing if not found
+              coords: { lat, lng: lon }
+            }));
           }
         } catch (error) {
           console.error('Error geocoding location:', error);
@@ -329,6 +413,8 @@ const HostListingForm = () => {
           serviceCategory: data.serviceCategory || '',
           description: data.description || '',
           location: data.location || '',
+          province: data.province || '',
+          coords: data.coords || { lat: null, lng: null },
           rate: data.rate || '',
           discount: data.discount || '',
           promo: data.promo || '',
@@ -340,6 +426,11 @@ const HostListingForm = () => {
           amenities: data.amenities || [],
           unavailableDates: unavailableDates
         };
+        
+        // Set map position if coords exist
+        if (formattedData.coords && formattedData.coords.lat && formattedData.coords.lng) {
+          setMapPosition([formattedData.coords.lat, formattedData.coords.lng]);
+        }
         setFormData(formattedData);
         // Store original data for comparison
         setOriginalData(formattedData);
@@ -563,13 +654,20 @@ const HostListingForm = () => {
         return Timestamp.fromDate(date);
       });
       
+      // SAFETY: Never delete listings due to missing location/province/coords
+      // All fields are optional - listings remain valid even if province or coords are missing
       // Build listing data - allow empty fields for drafts
       const listingData = {
         title: (formData.title || '').trim(),
         category: formData.category || 'home',
         serviceCategory: formData.category === 'service' ? (formData.serviceCategory || 'other') : null,
         description: (formData.description || '').trim(),
-        location: (formData.location || '').trim(),
+        location: (formData.location || '').trim(), // Can be empty for drafts
+        // Province and coords are optional - listing is valid without them
+        province: (formData.province || '').trim(), // Empty string if missing - listing still valid
+        coords: formData.coords && formData.coords.lat && formData.coords.lng 
+          ? { lat: formData.coords.lat, lng: formData.coords.lng }
+          : null, // null if missing - listing still valid
         hostId: user.uid,
         rate: formData.rate ? parseFloat(formData.rate) : 0,
         discount: formData.discount ? parseFloat(formData.discount) : 0,
@@ -580,6 +678,14 @@ const HostListingForm = () => {
         promo: (formData.promo || '').trim(),
         amenities: formData.amenities || [],
         unavailableDates: unavailableDatesTimestamps,
+        // NOTE: completedBookingsCount should be maintained by a Cloud Function
+        // Recommended Cloud Function: onBookingStatusChange
+        // Trigger: bookings/{bookingId}.onWrite
+        // Logic: When booking status changes to 'completed', increment listings/{listingId}.completedBookingsCount
+        //        When booking status changes from 'completed', decrement completedBookingsCount
+        // This keeps query performance optimal. If Cloud Function is not available, use client-side aggregation
+        // but note performance implications for large datasets.
+        completedBookingsCount: 0, // Initialize to 0, will be maintained by Cloud Function
         status: publish ? 'published' : 'draft' // Explicitly set to 'draft' when not publishing
       };
 
@@ -1135,7 +1241,7 @@ const HostListingForm = () => {
                   attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
-                <LocationMarker position={mapPosition} setPosition={setMapPosition} />
+                <LocationMarker position={mapPosition} setPosition={setMapPosition} onLocationSet={handleMapLocationSet} />
               </MapContainer>
             </div>
           )}

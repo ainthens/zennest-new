@@ -7,6 +7,11 @@ import { db } from '../config/firebase';
 import useAuth from '../hooks/useAuth';
 import SettingsHeader from '../components/SettingsHeader';
 import Loading from '../components/Loading';
+import {
+  PayPalScriptProvider,
+  PayPalButtons,
+  usePayPalScriptReducer
+} from '@paypal/react-paypal-js';
 import { 
   FaWallet, 
   FaPlus, 
@@ -21,8 +26,75 @@ import {
   FaShoppingCart,
   FaGift,
   FaExchangeAlt,
-  FaChartLine
+  FaChartLine,
+  FaPaypal,
+  FaSpinner
 } from 'react-icons/fa';
+
+// PayPal Top-Up Buttons Component
+const PayPalTopUpButtons = ({ amount, onSuccess, onError }) => {
+  const paypalClientId = import.meta?.env?.VITE_PAYPAL_CLIENT_ID || '';
+
+  const createOrder = (data, actions) => {
+    return actions.order.create({
+      purchase_units: [{
+        amount: {
+          value: amount.toFixed(2),
+          currency_code: 'PHP'
+        },
+        description: `Wallet top-up of ₱${amount.toLocaleString()}`
+      }]
+    });
+  };
+
+  const onApprove = async (data, actions) => {
+    try {
+      const order = await actions.order.capture();
+      const capturedAmount = parseFloat(order.purchase_units[0].payments.captures[0].amount.value);
+      onSuccess(order.id, capturedAmount);
+    } catch (error) {
+      console.error('PayPal approval error:', error);
+      onError(error.message || 'Payment approval failed');
+    }
+  };
+
+  if (!paypalClientId) {
+    return (
+      <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+        <p className="text-sm text-yellow-800">PayPal is not configured. Please contact support.</p>
+      </div>
+    );
+  }
+
+  return (
+    <PayPalScriptProvider
+      options={{
+        clientId: paypalClientId,
+        currency: 'PHP',
+        intent: 'capture',
+        components: 'buttons'
+      }}
+    >
+      <PayPalButtons
+        createOrder={createOrder}
+        onApprove={onApprove}
+        onError={(err) => {
+          console.error('PayPal error:', err);
+          onError('Payment failed. Please try again.');
+        }}
+        onCancel={() => {
+          onError('Payment cancelled');
+        }}
+        style={{
+          layout: 'vertical',
+          color: 'blue',
+          shape: 'rect',
+          label: 'paypal'
+        }}
+      />
+    </PayPalScriptProvider>
+  );
+};
 
 const UserWallet = () => {
   const { user } = useAuth();
@@ -33,6 +105,9 @@ const UserWallet = () => {
   const [showTopUp, setShowTopUp] = useState(false);
   const [topUpAmount, setTopUpAmount] = useState('');
   const [processingTopUp, setProcessingTopUp] = useState(false);
+  const [topUpMethod, setTopUpMethod] = useState('paypal'); // 'paypal' or 'manual'
+  const [paypalTopUpSuccess, setPaypalTopUpSuccess] = useState(false);
+  const [paypalTopUpError, setPaypalTopUpError] = useState('');
   const [filter, setFilter] = useState('all'); // all, topup, payment, refund, bonus
 
   useEffect(() => {
@@ -75,22 +150,65 @@ const UserWallet = () => {
       }
 
       // Fetch transactions
-      const transactionsRef = collection(db, 'transactions');
-      const q = query(
-        transactionsRef, 
-        where('userId', '==', user.uid),
-        orderBy('createdAt', 'desc'),
-        limit(50)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const transactionsData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : new Date()
-      }));
+      try {
+        const transactionsRef = collection(db, 'transactions');
+        const q = query(
+          transactionsRef, 
+          where('userId', '==', user.uid),
+          orderBy('createdAt', 'desc'),
+          limit(50)
+        );
+        
+        const querySnapshot = await getDocs(q);
+        const transactionsData = querySnapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data,
+            paymentMethod: data.paymentMethod || 'unknown',
+            createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt instanceof Date ? data.createdAt : new Date())
+          };
+        });
 
-      setTransactions(transactionsData);
+        setTransactions(transactionsData);
+      } catch (queryError) {
+        // If index error, try fetching without orderBy
+        if (queryError.code === 'failed-precondition' || queryError.message?.includes('index')) {
+          try {
+            const transactionsRef = collection(db, 'transactions');
+            const q = query(
+              transactionsRef, 
+              where('userId', '==', user.uid)
+            );
+            
+            const querySnapshot = await getDocs(q);
+            const transactionsData = querySnapshot.docs
+              .map(doc => {
+                const data = doc.data();
+                return {
+                  id: doc.id,
+                  ...data,
+                  paymentMethod: data.paymentMethod || 'unknown',
+                  createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt instanceof Date ? data.createdAt : new Date())
+                };
+              })
+              .sort((a, b) => {
+                const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : 0;
+                const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : 0;
+                return bTime - aTime;
+              })
+              .slice(0, 50);
+
+            setTransactions(transactionsData);
+          } catch (fallbackError) {
+            console.error('Error in fallback transaction query:', fallbackError);
+            setTransactions([]);
+          }
+        } else {
+          console.error('Error fetching transactions:', queryError);
+          setTransactions([]);
+        }
+      }
     } catch (error) {
       console.error('Error fetching wallet data:', error);
       setWallet({ balance: 0 });
@@ -101,25 +219,75 @@ const UserWallet = () => {
   };
 
   const handleTopUp = async () => {
-    const amount = parseFloat(topUpAmount);
-    
-    if (!amount || amount <= 0) {
-      alert('Please enter a valid amount');
-      return;
-    }
+    // Manual top-up (for testing/development) - only if not using PayPal
+    if (topUpMethod === 'manual') {
+      const amount = parseFloat(topUpAmount);
+      
+      if (!amount || amount <= 0) {
+        alert('Please enter a valid amount');
+        return;
+      }
 
-    if (amount < 100) {
-      alert('Minimum top-up amount is ₱100');
-      return;
-    }
+      if (amount < 100) {
+        alert('Minimum top-up amount is ₱100');
+        return;
+      }
 
-    if (amount > 50000) {
-      alert('Maximum top-up amount is ₱50,000');
-      return;
-    }
+      if (amount > 50000) {
+        alert('Maximum top-up amount is ₱50,000');
+        return;
+      }
 
+      try {
+        setProcessingTopUp(true);
+
+        // Create transaction record
+        const transactionsRef = collection(db, 'transactions');
+        await addDoc(transactionsRef, {
+          userId: user.uid,
+          type: 'topup',
+          amount: amount,
+          status: 'completed',
+          description: 'Wallet top-up (Manual)',
+          paymentMethod: 'manual',
+          createdAt: serverTimestamp()
+        });
+
+        // Update wallet balance
+        const walletRef = doc(db, 'wallets', user.uid);
+        const currentWallet = await getDoc(walletRef);
+        const currentBalance = currentWallet.exists() ? (currentWallet.data().balance || 0) : 0;
+        const newBalance = currentBalance + amount;
+        
+        await setDoc(walletRef, {
+          userId: user.uid,
+          balance: newBalance,
+          currency: 'PHP',
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+
+        // Refresh data
+        await fetchWalletData();
+        
+        setShowTopUp(false);
+        setTopUpAmount('');
+        setTopUpMethod('paypal');
+        alert(`Successfully added ₱${amount.toLocaleString()} to your wallet!`);
+      } catch (error) {
+        console.error('Error processing top-up:', error);
+        alert('Failed to process top-up. Please try again.');
+      } finally {
+        setProcessingTopUp(false);
+      }
+    }
+    // PayPal top-up is handled by PayPalButtons component
+  };
+
+  const handlePayPalTopUpSuccess = async (orderId, amount) => {
     try {
       setProcessingTopUp(true);
+      setPaypalTopUpError('');
+      setPaypalTopUpSuccess(false);
 
       // Create transaction record
       const transactionsRef = collection(db, 'transactions');
@@ -128,36 +296,56 @@ const UserWallet = () => {
         type: 'topup',
         amount: amount,
         status: 'completed',
-        description: 'Wallet top-up',
-        paymentMethod: 'card',
+        description: 'Wallet top-up via PayPal',
+        paymentMethod: 'paypal',
+        paypalOrderId: orderId,
         createdAt: serverTimestamp()
       });
 
       // Update wallet balance
       const walletRef = doc(db, 'wallets', user.uid);
-      const newBalance = (wallet?.balance || 0) + amount;
+      const currentWallet = await getDoc(walletRef);
+      const currentBalance = currentWallet.exists() ? (currentWallet.data().balance || 0) : 0;
+      const newBalance = currentBalance + amount;
+      
       await setDoc(walletRef, {
+        userId: user.uid,
         balance: newBalance,
+        currency: 'PHP',
         updatedAt: serverTimestamp()
       }, { merge: true });
 
       // Refresh data
       await fetchWalletData();
       
-      setShowTopUp(false);
+      setPaypalTopUpSuccess(true);
       setTopUpAmount('');
-      alert(`Successfully added ₱${amount.toLocaleString()} to your wallet!`);
+      
+      // Close modal after 2 seconds
+      setTimeout(() => {
+        setShowTopUp(false);
+        setPaypalTopUpSuccess(false);
+        setTopUpMethod('paypal');
+      }, 2000);
     } catch (error) {
-      console.error('Error processing top-up:', error);
-      alert('Failed to process top-up. Please try again.');
-    } finally {
+      console.error('Error processing PayPal top-up:', error);
+      setPaypalTopUpError('Failed to process top-up. Please try again.');
       setProcessingTopUp(false);
     }
   };
 
-  const getTransactionIcon = (type) => {
+  const getTransactionIcon = (type, paymentMethod) => {
+    // E-wallet payments should show wallet icon
+    if (type === 'payment' && (paymentMethod === 'ewallet' || paymentMethod === 'wallet')) {
+      return { icon: FaWallet, color: 'text-red-600', bg: 'bg-red-100' };
+    }
+    
     switch (type) {
       case 'topup':
+        // Show PayPal icon for PayPal top-ups
+        if (paymentMethod === 'paypal') {
+          return { icon: FaPaypal, color: 'text-blue-600', bg: 'bg-blue-100' };
+        }
         return { icon: FaArrowDown, color: 'text-green-600', bg: 'bg-green-100' };
       case 'payment':
         return { icon: FaArrowUp, color: 'text-red-600', bg: 'bg-red-100' };
@@ -328,11 +516,19 @@ const UserWallet = () => {
                 ) : (
                   <div className="space-y-3">
                     {filteredTransactions.map((transaction, index) => {
-                      const iconInfo = getTransactionIcon(transaction.type);
+                      const iconInfo = getTransactionIcon(transaction.type, transaction.paymentMethod);
                       const Icon = iconInfo.icon;
                       const statusInfo = getStatusInfo(transaction.status);
                       const StatusIcon = statusInfo.icon;
                       const isCredit = transaction.type === 'topup' || transaction.type === 'refund' || transaction.type === 'bonus';
+
+                      // Format description with payment method
+                      let description = transaction.description || 'No description';
+                      if (transaction.type === 'topup' && transaction.paymentMethod === 'paypal') {
+                        description = 'Wallet top-up via PayPal';
+                      } else if (transaction.type === 'payment' && (transaction.paymentMethod === 'ewallet' || transaction.paymentMethod === 'wallet')) {
+                        description = transaction.description || 'E-wallet payment';
+                      }
 
                       return (
                         <motion.div
@@ -349,16 +545,25 @@ const UserWallet = () => {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1">
                                 <h4 className="font-semibold text-gray-900 capitalize">
-                                  {transaction.type === 'topup' ? 'Wallet Top-up' : transaction.type}
+                                  {transaction.type === 'topup' ? 'Wallet Top-up' : 
+                                   transaction.type === 'payment' && (transaction.paymentMethod === 'ewallet' || transaction.paymentMethod === 'wallet') ? 'E-wallet Payment' :
+                                   transaction.type}
                                 </h4>
                                 <StatusIcon className={`w-3.5 h-3.5 ${statusInfo.color}`} />
                               </div>
                               <p className="text-sm text-gray-600 truncate">
-                                {transaction.description || 'No description'}
+                                {description}
                               </p>
-                              <p className="text-xs text-gray-500 mt-1">
-                                {formatDate(transaction.createdAt)}
-                              </p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <p className="text-xs text-gray-500">
+                                  {formatDate(transaction.createdAt)}
+                                </p>
+                                {transaction.paymentMethod && transaction.paymentMethod !== 'unknown' && (
+                                  <span className="text-xs text-gray-400 capitalize">
+                                    • {transaction.paymentMethod === 'ewallet' || transaction.paymentMethod === 'wallet' ? 'E-wallet' : transaction.paymentMethod}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
                           <div className="text-right ml-4">
@@ -455,31 +660,54 @@ const UserWallet = () => {
                 </div>
               </div>
 
+              {/* Success Message */}
+              {paypalTopUpSuccess && (
+                <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <FaCheckCircle className="w-5 h-5 text-green-600" />
+                    <p className="text-sm text-green-800 font-medium">
+                      Top-up successful! Funds added to your wallet.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Error Message */}
+              {paypalTopUpError && (
+                <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <FaTimesCircle className="w-5 h-5 text-red-600" />
+                    <p className="text-sm text-red-800">{paypalTopUpError}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* PayPal Payment Section */}
+              {topUpAmount && parseFloat(topUpAmount) >= 100 && !paypalTopUpSuccess && (
+                <div className="mb-4">
+                  <p className="text-sm font-medium text-gray-700 mb-3">Pay with PayPal</p>
+                  <PayPalTopUpButtons
+                    amount={parseFloat(topUpAmount)}
+                    onSuccess={handlePayPalTopUpSuccess}
+                    onError={(error) => setPaypalTopUpError(error || 'Payment failed. Please try again.')}
+                  />
+                </div>
+              )}
+
               {/* Action Buttons */}
               <div className="flex gap-3">
                 <button
-                  onClick={() => setShowTopUp(false)}
+                  onClick={() => {
+                    setShowTopUp(false);
+                    setTopUpAmount('');
+                    setPaypalTopUpSuccess(false);
+                    setPaypalTopUpError('');
+                    setTopUpMethod('paypal');
+                  }}
                   disabled={processingTopUp}
                   className="flex-1 px-4 py-3 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 transition font-semibold disabled:opacity-50"
                 >
                   Cancel
-                </button>
-                <button
-                  onClick={handleTopUp}
-                  disabled={processingTopUp || !topUpAmount || parseFloat(topUpAmount) < 100}
-                  className="flex-1 px-4 py-3 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {processingTopUp ? (
-                    <>
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                      Processing...
-                    </>
-                  ) : (
-                    <>
-                      <FaPlus className="w-4 h-4" />
-                      Add ₱{topUpAmount ? parseFloat(topUpAmount).toLocaleString() : '0'}
-                    </>
-                  )}
                 </button>
               </div>
             </motion.div>

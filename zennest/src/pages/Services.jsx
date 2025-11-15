@@ -3,8 +3,9 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { motion } from "framer-motion";
 import { useInView } from "react-intersection-observer";
 import { useNavigate } from "react-router-dom";
-import { getPublishedListings } from "../services/firestoreService";
-import { FaUtensils, FaSpa, FaCamera, FaEllipsisH } from "react-icons/fa";
+import { getPublishedListings, getGuestProfile } from "../services/firestoreService";
+import { FaUtensils, FaSpa, FaCamera, FaEllipsisH, FaChevronLeft, FaChevronRight } from "react-icons/fa";
+import useAuth from "../hooks/useAuth";
 
 // Optimized animation variants - faster and smoother
 const fadeInUp = {
@@ -99,6 +100,7 @@ const AnimatedCard = ({ children, className = "", delay = 0 }) => {
 
 const Services = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const videoRef = useRef(null);
   const [heroRef, heroInView] = useInView({
     triggerOnce: true,
@@ -142,6 +144,51 @@ const Services = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 6;
+  
+  // New state for suggested services and services near you
+  const [userProvince, setUserProvince] = useState('');
+  const [suggestedServices, setSuggestedServices] = useState([]);
+  const [servicesNearYou, setServicesNearYou] = useState([]);
+  
+  // Slider state for "Services Near Your Place"
+  const [nearYouSlideIndex, setNearYouSlideIndex] = useState(0);
+  const nearYouScrollRef = useRef(null);
+
+  // Fetch user profile to get province
+  useEffect(() => {
+    const fetchUserProvince = async () => {
+      if (!user?.uid) {
+        console.log('ℹ️ No user found - skipping province fetch');
+        return;
+      }
+
+      try {
+        console.log('🔍 Fetching user province for user:', user.uid);
+        const result = await getGuestProfile(user.uid);
+        console.log('📋 getGuestProfile result:', result);
+        
+        if (result.success && result.data) {
+          const province = (result.data.province || '').trim();
+          console.log('📍 User province from profile:', province);
+          if (province) {
+            setUserProvince(province);
+            console.log('✅ User province set to:', province);
+          } else {
+            console.log('⚠️ User profile found but province is empty');
+            setUserProvince('');
+          }
+        } else {
+          console.log('⚠️ Failed to fetch user profile or no data');
+          setUserProvince('');
+        }
+      } catch (error) {
+        console.error('❌ Error fetching user province:', error);
+        setUserProvince('');
+      }
+    };
+
+    fetchUserProvince();
+  }, [user]);
 
   // Fetch published service listings from Firestore
   useEffect(() => {
@@ -150,8 +197,8 @@ const Services = () => {
         setLoading(true);
         const result = await getPublishedListings('service');
         if (result.success && result.data) {
-          // Map Firestore data to match the service card format
-          const mappedServices = result.data.map((listing, index) => ({
+          // SAFETY: Normalize services with safe defaults - never exclude services due to missing province/coords
+          const normalizedServices = result.data.map((listing, index) => ({
             id: listing.id,
             title: listing.title || 'Untitled Service',
             description: listing.description || '',
@@ -167,9 +214,65 @@ const Services = () => {
             rate: listing.rate || 0,
             discount: listing.discount || 0,
             location: listing.location || '',
-            hostId: listing.hostId
-          }));
-          setServices(mappedServices);
+            hostId: listing.hostId,
+            // Include new fields with safe defaults
+            completedBookingsCount: listing.completedBookingsCount || 0,
+            province: (listing.province || '').trim(), // Empty string if missing
+            coords: listing.coords || null, // null if missing
+            status: listing.status || 'published',
+            archived: listing.archived || false
+          })).filter(s => s.status === 'published' && !s.archived);
+          
+          setServices(normalizedServices);
+          console.log(`✅ Mapped ${normalizedServices.length} published services (excluding archived)`);
+          console.log(`📊 Services with province: ${normalizedServices.filter(s => s.province).length}, without: ${normalizedServices.filter(s => !s.province).length}`);
+
+          // SECTION 1: Calculate Suggested Services (Top 3 by completedBookingsCount)
+          // These services will ALSO appear in "List of All Services" - no filtering
+          const suggested = normalizedServices
+            .slice() // Copy array
+            .sort((a, b) => (b.completedBookingsCount || 0) - (a.completedBookingsCount || 0))
+            .slice(0, 3);
+          setSuggestedServices(suggested);
+          console.log(`✅ Calculated ${suggested.length} suggested services`);
+
+          // SECTION 2: Calculate Services Near You (province-based)
+          // These services will ALSO appear in "List of All Services" - no filtering
+          if (userProvince) {
+            const normalizedUserProvince = userProvince.toLowerCase().trim();
+            console.log(`🔍 Filtering services for province: "${userProvince}" (normalized: "${normalizedUserProvince}")`);
+            
+            // Get all unique provinces from services for debugging
+            const allProvinces = [...new Set(normalizedServices.map(s => (s.province || '').toLowerCase().trim()).filter(Boolean))];
+            console.log(`📊 Available provinces in services:`, allProvinces);
+            console.log(`📊 Total services: ${normalizedServices.length}, Services with province: ${normalizedServices.filter(s => s.province).length}`);
+            
+            const near = normalizedServices.filter(s => {
+              const serviceProvince = (s.province || '').toLowerCase().trim();
+              // Exact match
+              const exactMatch = serviceProvince && serviceProvince === normalizedUserProvince;
+              // Also check if location string contains the province (fallback)
+              const locationMatch = s.location && s.location.toLowerCase().includes(normalizedUserProvince);
+              const matches = exactMatch || locationMatch;
+              
+              // Debug logging for first few services
+              if (normalizedServices.indexOf(s) < 3) {
+                console.log(`  Service "${s.title}": province="${s.province}" (normalized: "${serviceProvince}"), location="${s.location}", exactMatch: ${exactMatch}, locationMatch: ${locationMatch}, final: ${matches}`);
+              }
+              
+              return matches;
+            });
+            
+            setServicesNearYou(near);
+            console.log(`✅ Found ${near.length} services near you in ${userProvince}`);
+            
+            if (near.length === 0 && normalizedServices.filter(s => s.province).length > 0) {
+              console.warn(`⚠️ No matches found! User province: "${normalizedUserProvince}", Available provinces:`, allProvinces);
+            }
+          } else {
+            setServicesNearYou([]);
+            console.log('ℹ️ User province not set - skipping Services Near You section');
+          }
         }
       } catch (error) {
         console.error('Error fetching services:', error);
@@ -179,7 +282,7 @@ const Services = () => {
     };
 
     fetchServices();
-  }, []);
+  }, [userProvince]);
 
   // Extract unique categories and locations from services
   const serviceCategories = useMemo(() => {
@@ -206,6 +309,8 @@ const Services = () => {
   }, [services]);
 
   // Filter and sort services
+  // CRITICAL: Do NOT filter out services that appear in Suggested or Near You sections
+  // All services must appear in "List of All Services" regardless of where else they appear
   const filteredServices = useMemo(() => {
     let results = services.filter(service => {
       // Category filter
@@ -528,6 +633,7 @@ const Services = () => {
       {/* Services Grid Section */}
       <div className="w-full bg-slate-100">
         <section className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-8 sm:py-12 lg:py-16 xl:py-24">
+          {/* Featured Services Header */}
           <AnimatedSection className="text-center mb-6 sm:mb-8 lg:mb-12">
             <motion.h2 
               variants={fadeInUp}
@@ -540,12 +646,11 @@ const Services = () => {
               className="text-sm sm:text-base text-gray-600 max-w-2xl mx-auto px-2"
             >
               Handpicked services to make your stay unforgettable
-              
             </motion.p>
           </AnimatedSection>
 
-          {/* Filters and Search Section */}
-          <AnimatedSection className="mb-6 sm:mb-8">
+          {/* SEARCH BAR - MOVED TO TOP */}
+          <AnimatedSection className="mb-8 sm:mb-12">
             <div className="bg-white rounded-lg sm:rounded-xl lg:rounded-2xl shadow-sm border border-gray-200 p-3 sm:p-4 lg:p-6">
               {/* Search Bar */}
               <div className="mb-3 sm:mb-4 lg:mb-6">
@@ -650,239 +755,704 @@ const Services = () => {
             </div>
           </AnimatedSection>
 
-          {/* Services Grid */}
-          <AnimatedGrid className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4 lg:gap-6 xl:gap-8">
-            {loading ? (
-              <div className="col-span-full text-center py-12">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600 mx-auto mb-4"></div>
-                <p className="text-gray-600">Loading services...</p>
+          {/* SECTION 1: Suggested Services - Top 3 by completedBookingsCount */}
+          {suggestedServices.length > 0 && (
+            <AnimatedSection className="mb-12 sm:mb-16">
+              <div className="mb-6">
+                <h2 className="text-2xl font-semibold text-gray-900 mb-2">Suggested Services</h2>
+                <p className="text-sm text-gray-600">Most popular services based on completed bookings</p>
               </div>
-            ) : filteredServices.length === 0 ? (
-              <div className="col-span-full bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl sm:rounded-2xl shadow-inner p-8 sm:p-12 lg:p-16 text-center border-2 border-dashed border-gray-300">
-                <div className="mb-4 sm:mb-6">
-                  <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 lg:w-24 lg:h-24 bg-white rounded-full shadow-lg mb-3 sm:mb-4">
-                    <svg className="w-8 h-8 sm:w-10 sm:h-10 lg:w-12 lg:h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                    </svg>
-                  </div>
-                </div>
-                <h3 className="text-lg sm:text-xl font-semibold text-gray-900 mb-1.5 sm:mb-2">No services found</h3>
-                <p className="text-sm sm:text-base text-gray-600 max-w-md mx-auto mb-4 sm:mb-6 px-2">
-                  {searchQuery || selectedCategory !== 'all' || selectedLocation !== 'all' || priceRange !== 'all' 
-                    ? 'Try adjusting your filters to see more results.'
-                    : "We're working on bringing you amazing local services. Check back soon!"}
-                </p>
-                {(searchQuery || selectedCategory !== 'all' || selectedLocation !== 'all' || priceRange !== 'all') && (
-                  <button
-                    onClick={() => {
-                      setSelectedCategory('all');
-                      setSelectedLocation('all');
-                      setPriceRange('all');
-                      setSearchQuery('');
-                    }}
-                    className="px-4 sm:px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium text-xs sm:text-sm"
-                  >
-                    Clear Filters
-                  </button>
-                )}
-              </div>
-            ) : (
-              paginatedServices.map((service) => (
-              <AnimatedCard key={service.id} delay={service.delay}>
-                <div 
-                  onClick={(e) => {
-                    // Don't trigger if clicking on buttons
-                    if (e.target.closest('button')) {
-                      return;
-                    }
-                    handleViewDetails(service);
-                  }}
-                  className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200/60 hover:border-emerald-200 group h-full flex flex-col cursor-pointer relative w-full"
-                >
-                  {/* Service Image/Header */}
-                  <div className="relative h-40 sm:h-48 md:h-52 lg:h-56 w-full overflow-hidden bg-gradient-to-r from-emerald-500 to-emerald-600">
-                    {service.image ? (
-                      <>
-                        <img 
-                          src={service.image} 
-                          alt={service.title}
-                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                      </>
-                    ) : (
-                      <div className={`absolute inset-0 bg-gradient-to-br ${service.color || 'from-emerald-500 to-emerald-600'}`}></div>
-                    )}
-                    
-                    {/* Icon Badge */}
-                    <div className="absolute top-2 sm:top-3 left-2 sm:left-3 bg-white/95 backdrop-blur-sm rounded-lg sm:rounded-xl p-2 sm:p-2.5 shadow-sm border border-gray-200/60 z-10">
-                      <span className="text-lg sm:text-xl lg:text-2xl">{service.icon || '✨'}</span>
-                    </div>
-                    
-                    {/* Rating Badge */}
-                    {service.rating > 0 && (
-                      <div className="absolute left-2 sm:left-3 bottom-2 sm:bottom-3 bg-white/95 backdrop-blur-sm text-gray-800 text-xs sm:text-sm font-semibold px-2 sm:px-3 py-1 sm:py-1.5 rounded-full shadow-sm border border-gray-200/60 flex items-center gap-1 z-10">
-                        <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-yellow-400 fill-current" viewBox="0 0 20 20">
-                          <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
-                        </svg>
-                        <span>{service.rating.toFixed(1)}</span>
-                      </div>
-                    )}
-
-                    {/* Discount Badge */}
-                    {service.discount > 0 && (
-                      <div className="absolute top-2 sm:top-3 right-2 sm:right-3 bg-gradient-to-r from-red-500 to-red-600 text-white text-[10px] sm:text-xs font-bold px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg shadow-lg z-10 border-2 border-white/50">
-                        {service.discount}% OFF
-                      </div>
-                    )}
-                  </div>
-                  
-                  <div className="p-3 sm:p-4 lg:p-5 flex-1 flex flex-col">
-                    {/* Service Info */}
-                    <div className="mb-3 sm:mb-4 flex-1">
-                      <h3 className="text-base sm:text-lg lg:text-xl font-bold text-gray-900 line-clamp-2 leading-tight mb-1.5 sm:mb-2 group-hover:text-emerald-700 transition-colors">
-                        {service.title}
-                      </h3>
-                      
-                      {/* Location */}
-                      {service.location && (
-                        <div className="flex items-center gap-1 text-xs sm:text-sm text-gray-600 mb-2 sm:mb-3">
-                          <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
-                          </svg>
-                          <span className="line-clamp-1">{service.location}</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                {suggestedServices.map((service, index) => (
+                  <AnimatedCard key={service.id} delay={index * 0.1}>
+                    <div 
+                      onClick={(e) => {
+                        if (e.target.closest('button')) return;
+                        handleViewDetails(service);
+                      }}
+                      className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200/60 hover:border-emerald-200 group h-full flex flex-col cursor-pointer relative w-full"
+                    >
+                      <div className="relative h-40 sm:h-48 md:h-52 lg:h-56 w-full overflow-hidden bg-gradient-to-r from-emerald-500 to-emerald-600">
+                        {service.image ? (
+                          <>
+                            <img 
+                              src={service.image} 
+                              alt={service.title}
+                              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                          </>
+                        ) : (
+                          <div className={`absolute inset-0 bg-gradient-to-br ${service.color || 'from-emerald-500 to-emerald-600'}`}></div>
+                        )}
+                        
+                        <div className="absolute top-2 sm:top-3 left-2 sm:left-3 bg-white/95 backdrop-blur-sm rounded-lg sm:rounded-xl p-2 sm:p-2.5 shadow-sm border border-gray-200/60 z-10">
+                          <span className="text-lg sm:text-xl lg:text-2xl">{service.icon || '✨'}</span>
                         </div>
-                      )}
+                        
+                        {service.rating > 0 && (
+                          <div className="absolute left-2 sm:left-3 bottom-2 sm:bottom-3 bg-white/95 backdrop-blur-sm text-gray-800 text-xs sm:text-sm font-semibold px-2 sm:px-3 py-1 sm:py-1.5 rounded-full shadow-sm border border-gray-200/60 flex items-center gap-1 z-10">
+                            <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-yellow-400 fill-current" viewBox="0 0 20 20">
+                              <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
+                            </svg>
+                            <span>{service.rating.toFixed(1)}</span>
+                          </div>
+                        )}
+
+                        {service.discount > 0 && (
+                          <div className="absolute top-2 sm:top-3 right-2 sm:right-3 bg-gradient-to-r from-red-500 to-red-600 text-white text-[10px] sm:text-xs font-bold px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg shadow-lg z-10 border-2 border-white/50">
+                            {service.discount}% OFF
+                          </div>
+                        )}
+                      </div>
                       
-                      <p className="text-gray-600 text-xs sm:text-sm leading-relaxed line-clamp-2 mb-2 sm:mb-3">
-                        {service.description}
-                      </p>
-
-                      {/* Reviews & Bookings */}
-                      {service.reviews > 0 && (
-                        <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs text-gray-600">
-                          <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-500 fill-current" viewBox="0 0 20 20">
-                            <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
-                          </svg>
-                          <span className="font-semibold text-gray-900">{service.rating.toFixed(1)}</span>
-                          <span className="text-gray-400">•</span>
-                          <span className="text-gray-600">{service.reviews} {service.reviews === 1 ? 'booking' : 'bookings'}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Price and CTA */}
-                    <div className="mt-auto pt-3 sm:pt-4 border-t border-gray-100">
-                      <div className="flex items-center justify-between gap-2 sm:gap-3">
-                        <div className="min-w-0 flex-1">
-                          {service.discount > 0 ? (
-                            <div>
-                              <div className="flex items-baseline gap-1.5 sm:gap-2 mb-0.5 sm:mb-1 flex-wrap">
-                                <span className="text-lg sm:text-xl font-bold text-emerald-600">
-                                  ₱{((service.rate || 0) * (1 - service.discount / 100)).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                                </span>
-                                <span className="text-xs sm:text-sm text-gray-400 line-through font-medium">
-                                  ₱{(service.rate || 0).toLocaleString()}
-                                </span>
-                                <span className="text-[10px] sm:text-xs text-red-600 font-bold bg-red-50 px-1.5 sm:px-2 py-0.5 rounded">
-                                  -{service.discount}%
-                                </span>
-                              </div>
-                              <p className="text-[10px] sm:text-xs text-gray-500 whitespace-nowrap">{service.duration}</p>
+                      <div className="p-3 sm:p-4 lg:p-5 flex-1 flex flex-col">
+                        <div className="mb-3 sm:mb-4 flex-1">
+                          <h3 className="text-base sm:text-lg lg:text-xl font-bold text-gray-900 line-clamp-2 leading-tight mb-1.5 sm:mb-2 group-hover:text-emerald-700 transition-colors">
+                            {service.title}
+                          </h3>
+                          
+                          {service.location && (
+                            <div className="flex items-center gap-1 text-xs sm:text-sm text-gray-600 mb-2 sm:mb-3">
+                              <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                              </svg>
+                              <span className="line-clamp-1">{service.location}</span>
                             </div>
-                          ) : (
-                            <div>
-                              <span className="text-lg sm:text-xl font-bold text-emerald-600">₱{(service.rate || 0).toLocaleString()}</span>
-                              <p className="text-[10px] sm:text-xs text-gray-500 mt-0.5 sm:mt-1 whitespace-nowrap">{service.duration}</p>
+                          )}
+                          
+                          <p className="text-gray-600 text-xs sm:text-sm leading-relaxed line-clamp-2 mb-2 sm:mb-3">
+                            {service.description}
+                          </p>
+
+                          {service.reviews > 0 && (
+                            <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs text-gray-600">
+                              <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-500 fill-current" viewBox="0 0 20 20">
+                                <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
+                              </svg>
+                              <span className="font-semibold text-gray-900">{service.rating.toFixed(1)}</span>
+                              <span className="text-gray-400">•</span>
+                              <span className="text-gray-600">{service.reviews} {service.reviews === 1 ? 'booking' : 'bookings'}</span>
                             </div>
                           )}
                         </div>
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleViewDetails(service);
-                          }}
-                          className="bg-emerald-600 text-white py-2 sm:py-2.5 px-3 sm:px-5 rounded-lg sm:rounded-xl text-xs sm:text-sm font-medium hover:bg-emerald-700 transition-all duration-200 transform hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 whitespace-nowrap flex items-center gap-1.5 sm:gap-2 flex-shrink-0"
-                        >
-                          Book
-                          <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                          </svg>
-                        </button>
+
+                        <div className="mt-auto pt-3 sm:pt-4 border-t border-gray-100">
+                          <div className="flex items-center justify-between gap-2 sm:gap-3">
+                            <div className="min-w-0 flex-1">
+                              {service.discount > 0 ? (
+                                <div>
+                                  <div className="flex items-baseline gap-1.5 sm:gap-2 mb-0.5 sm:mb-1 flex-wrap">
+                                    <span className="text-lg sm:text-xl font-bold text-emerald-600">
+                                      ₱{((service.rate || 0) * (1 - service.discount / 100)).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                                    </span>
+                                    <span className="text-xs sm:text-sm text-gray-400 line-through font-medium">
+                                      ₱{(service.rate || 0).toLocaleString()}
+                                    </span>
+                                    <span className="text-[10px] sm:text-xs text-red-600 font-bold bg-red-50 px-1.5 sm:px-2 py-0.5 rounded">
+                                      -{service.discount}%
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] sm:text-xs text-gray-500 whitespace-nowrap">{service.duration}</p>
+                                </div>
+                              ) : (
+                                <div>
+                                  <span className="text-lg sm:text-xl font-bold text-emerald-600">₱{(service.rate || 0).toLocaleString()}</span>
+                                  <p className="text-[10px] sm:text-xs text-gray-500 mt-0.5 sm:mt-1 whitespace-nowrap">{service.duration}</p>
+                                </div>
+                              )}
+                            </div>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleViewDetails(service);
+                              }}
+                              className="bg-emerald-600 text-white py-2 sm:py-2.5 px-3 sm:px-5 rounded-lg sm:rounded-xl text-xs sm:text-sm font-medium hover:bg-emerald-700 transition-all duration-200 transform hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 whitespace-nowrap flex items-center gap-1.5 sm:gap-2 flex-shrink-0"
+                            >
+                              Book
+                              <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
                       </div>
+
+                      <div className="absolute inset-0 border-2 border-transparent group-hover:border-emerald-200 rounded-2xl pointer-events-none transition-all duration-300"></div>
                     </div>
+                  </AnimatedCard>
+                ))}
+              </div>
+            </AnimatedSection>
+          )}
+
+          {/* SECTION 2: Services Near Your Place - Province-based with slider if >3 */}
+          {userProvince && (
+            <AnimatedSection className="mb-12 sm:mb-16">
+              <div className="mb-6">
+                <h2 className="text-2xl font-semibold text-gray-900 mb-2">Services near your place</h2>
+                <p className="text-sm text-gray-600">Services in {userProvince}</p>
+              </div>
+              
+              {servicesNearYou.length === 0 ? (
+                <div className="bg-gray-50 rounded-xl p-8 text-center border border-gray-200">
+                  <p className="text-gray-600">No nearby services found based on your location.</p>
+                </div>
+              ) : servicesNearYou.length > 3 ? (
+                <div className="relative">
+                  {nearYouSlideIndex > 0 && (
+                    <button
+                      onClick={() => {
+                        const newIndex = nearYouSlideIndex - 1;
+                        setNearYouSlideIndex(newIndex);
+                        if (nearYouScrollRef.current) {
+                          nearYouScrollRef.current.scrollTo({
+                            left: newIndex * nearYouScrollRef.current.clientWidth,
+                            behavior: "smooth",
+                          });
+                        }
+                      }}
+                      className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white rounded-full shadow-lg p-3 hover:bg-gray-50 transition-colors border border-gray-200"
+                      aria-label="Previous"
+                    >
+                      <FaChevronLeft className="w-5 h-5 text-gray-700" />
+                    </button>
+                  )}
+
+                  <div
+                    ref={nearYouScrollRef}
+                    className="flex overflow-x-auto scroll-smooth snap-x snap-mandatory gap-6 pb-4 no-scrollbar"
+                    style={{
+                      scrollbarWidth: 'none',
+                      msOverflowStyle: 'none'
+                    }}
+                    onScroll={(e) => {
+                      const scrollLeft = e.target.scrollLeft;
+                      const clientWidth = e.target.clientWidth;
+                      const maxIndex = Math.ceil(servicesNearYou.length / 3) - 1;
+                      const currentIndex = Math.round(scrollLeft / clientWidth);
+                      if (currentIndex !== nearYouSlideIndex && currentIndex <= maxIndex) {
+                        setNearYouSlideIndex(currentIndex);
+                      }
+                    }}
+                  >
+                    {servicesNearYou.map((service, index) => (
+                      <div
+                        key={service.id}
+                        className="min-w-[calc(33.333%-1rem)] sm:min-w-[calc(33.333%-1rem)] flex-shrink-0 snap-start"
+                      >
+                        <AnimatedCard delay={index * 0.05}>
+                          <div 
+                            onClick={(e) => {
+                              if (e.target.closest('button')) return;
+                              handleViewDetails(service);
+                            }}
+                            className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200/60 hover:border-emerald-200 group h-full flex flex-col cursor-pointer relative w-full"
+                          >
+                            <div className="relative h-40 sm:h-48 md:h-52 lg:h-56 w-full overflow-hidden bg-gradient-to-r from-emerald-500 to-emerald-600">
+                              {service.image ? (
+                                <>
+                                  <img 
+                                    src={service.image} 
+                                    alt={service.title}
+                                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                                  />
+                                  <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                </>
+                              ) : (
+                                <div className={`absolute inset-0 bg-gradient-to-br ${service.color || 'from-emerald-500 to-emerald-600'}`}></div>
+                              )}
+                              
+                              <div className="absolute top-2 sm:top-3 left-2 sm:left-3 bg-white/95 backdrop-blur-sm rounded-lg sm:rounded-xl p-2 sm:p-2.5 shadow-sm border border-gray-200/60 z-10">
+                                <span className="text-lg sm:text-xl lg:text-2xl">{service.icon || '✨'}</span>
+                              </div>
+                              
+                              {service.rating > 0 && (
+                                <div className="absolute left-2 sm:left-3 bottom-2 sm:bottom-3 bg-white/95 backdrop-blur-sm text-gray-800 text-xs sm:text-sm font-semibold px-2 sm:px-3 py-1 sm:py-1.5 rounded-full shadow-sm border border-gray-200/60 flex items-center gap-1 z-10">
+                                  <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-yellow-400 fill-current" viewBox="0 0 20 20">
+                                    <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
+                                  </svg>
+                                  <span>{service.rating.toFixed(1)}</span>
+                                </div>
+                              )}
+
+                              {service.discount > 0 && (
+                                <div className="absolute top-2 sm:top-3 right-2 sm:right-3 bg-gradient-to-r from-red-500 to-red-600 text-white text-[10px] sm:text-xs font-bold px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg shadow-lg z-10 border-2 border-white/50">
+                                    {service.discount}% OFF
+                                </div>
+                              )}
+                            </div>
+                            
+                            <div className="p-3 sm:p-4 lg:p-5 flex-1 flex flex-col">
+                              <div className="mb-3 sm:mb-4 flex-1">
+                                <h3 className="text-base sm:text-lg lg:text-xl font-bold text-gray-900 line-clamp-2 leading-tight mb-1.5 sm:mb-2 group-hover:text-emerald-700 transition-colors">
+                                  {service.title}
+                                </h3>
+                                
+                                {service.location && (
+                                  <div className="flex items-center gap-1 text-xs sm:text-sm text-gray-600 mb-2 sm:mb-3">
+                                    <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                      <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                                    </svg>
+                                    <span className="line-clamp-1">{service.location}</span>
+                                  </div>
+                                )}
+                                
+                                <p className="text-gray-600 text-xs sm:text-sm leading-relaxed line-clamp-2 mb-2 sm:mb-3">
+                                  {service.description}
+                                </p>
+
+                                {service.reviews > 0 && (
+                                  <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs text-gray-600">
+                                    <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-500 fill-current" viewBox="0 0 20 20">
+                                      <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
+                                    </svg>
+                                    <span className="font-semibold text-gray-900">{service.rating.toFixed(1)}</span>
+                                    <span className="text-gray-400">•</span>
+                                    <span className="text-gray-600">{service.reviews} {service.reviews === 1 ? 'booking' : 'bookings'}</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="mt-auto pt-3 sm:pt-4 border-t border-gray-100">
+                                <div className="flex items-center justify-between gap-2 sm:gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    {service.discount > 0 ? (
+                                      <div>
+                                        <div className="flex items-baseline gap-1.5 sm:gap-2 mb-0.5 sm:mb-1 flex-wrap">
+                                          <span className="text-lg sm:text-xl font-bold text-emerald-600">
+                                            ₱{((service.rate || 0) * (1 - service.discount / 100)).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                                          </span>
+                                          <span className="text-xs sm:text-sm text-gray-400 line-through font-medium">
+                                            ₱{(service.rate || 0).toLocaleString()}
+                                          </span>
+                                          <span className="text-[10px] sm:text-xs text-red-600 font-bold bg-red-50 px-1.5 sm:px-2 py-0.5 rounded">
+                                            -{service.discount}%
+                                          </span>
+                                        </div>
+                                        <p className="text-[10px] sm:text-xs text-gray-500 whitespace-nowrap">{service.duration}</p>
+                                      </div>
+                                    ) : (
+                                      <div>
+                                        <span className="text-lg sm:text-xl font-bold text-emerald-600">₱{(service.rate || 0).toLocaleString()}</span>
+                                        <p className="text-[10px] sm:text-xs text-gray-500 mt-0.5 sm:mt-1 whitespace-nowrap">{service.duration}</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                  <button 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleViewDetails(service);
+                                    }}
+                                    className="bg-emerald-600 text-white py-2 sm:py-2.5 px-3 sm:px-5 rounded-lg sm:rounded-xl text-xs sm:text-sm font-medium hover:bg-emerald-700 transition-all duration-200 transform hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 whitespace-nowrap flex items-center gap-1.5 sm:gap-2 flex-shrink-0"
+                                  >
+                                    Book
+                                    <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="absolute inset-0 border-2 border-transparent group-hover:border-emerald-200 rounded-2xl pointer-events-none transition-all duration-300"></div>
+                          </div>
+                        </AnimatedCard>
+                      </div>
+                    ))}
                   </div>
 
-                  {/* Hover effect border */}
-                  <div className="absolute inset-0 border-2 border-transparent group-hover:border-emerald-200 rounded-2xl pointer-events-none transition-all duration-300"></div>
+                  {servicesNearYou.length > 3 && 
+                   nearYouSlideIndex < Math.ceil(servicesNearYou.length / 3) - 1 && (
+                    <button
+                      onClick={() => {
+                        const maxIndex = Math.ceil(servicesNearYou.length / 3) - 1;
+                        if (nearYouSlideIndex < maxIndex) {
+                          const newIndex = nearYouSlideIndex + 1;
+                          setNearYouSlideIndex(newIndex);
+                          if (nearYouScrollRef.current) {
+                            nearYouScrollRef.current.scrollTo({
+                              left: newIndex * nearYouScrollRef.current.clientWidth,
+                              behavior: "smooth",
+                            });
+                          }
+                        }
+                      }}
+                      className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white rounded-full shadow-lg p-3 hover:bg-gray-50 transition-colors border border-gray-200"
+                      aria-label="Next"
+                    >
+                      <FaChevronRight className="w-5 h-5 text-gray-700" />
+                    </button>
+                  )}
                 </div>
-              </AnimatedCard>
-              ))
-            )}
-          </AnimatedGrid>
-
-          {/* Pagination */}
-          {filteredServices.length > itemsPerPage && (
-            <div className="flex items-center justify-center gap-1.5 sm:gap-2 mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-gray-200">
-              <button
-                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                disabled={currentPage === 1}
-                className="px-3 sm:px-4 py-1.5 sm:py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm"
-              >
-                <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-                <span className="hidden sm:inline">Previous</span>
-                <span className="sm:hidden">Prev</span>
-              </button>
-              
-              <div className="flex items-center gap-1 sm:gap-2">
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => {
-                  if (
-                    page === 1 ||
-                    page === totalPages ||
-                    (page >= currentPage - 1 && page <= currentPage + 1)
-                  ) {
-                    return (
-                      <button
-                        key={page}
-                        onClick={() => setCurrentPage(page)}
-                        className={`px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-lg font-medium transition-colors text-xs sm:text-sm ${
-                          currentPage === page
-                            ? 'bg-emerald-600 text-white'
-                            : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-                        }`}
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                  {servicesNearYou.map((service, index) => (
+                    <AnimatedCard key={service.id} delay={index * 0.1}>
+                      {/* Reuse same card structure as suggested services */}
+                      <div 
+                        onClick={(e) => {
+                          if (e.target.closest('button')) return;
+                          handleViewDetails(service);
+                        }}
+                        className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200/60 hover:border-emerald-200 group h-full flex flex-col cursor-pointer relative w-full"
                       >
-                        {page}
-                      </button>
-                    );
-                  } else if (page === currentPage - 2 || page === currentPage + 2) {
-                    return <span key={page} className="px-1 sm:px-2 text-gray-400 text-xs sm:text-sm">...</span>;
-                  }
-                  return null;
-                })}
+                        <div className="relative h-40 sm:h-48 md:h-52 lg:h-56 w-full overflow-hidden bg-gradient-to-r from-emerald-500 to-emerald-600">
+                          {service.image ? (
+                            <>
+                              <img 
+                                src={service.image} 
+                                alt={service.title}
+                                className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                            </>
+                          ) : (
+                            <div className={`absolute inset-0 bg-gradient-to-br ${service.color || 'from-emerald-500 to-emerald-600'}`}></div>
+                          )}
+                          
+                          <div className="absolute top-2 sm:top-3 left-2 sm:left-3 bg-white/95 backdrop-blur-sm rounded-lg sm:rounded-xl p-2 sm:p-2.5 shadow-sm border border-gray-200/60 z-10">
+                            <span className="text-lg sm:text-xl lg:text-2xl">{service.icon || '✨'}</span>
+                          </div>
+                          
+                          {service.rating > 0 && (
+                            <div className="absolute left-2 sm:left-3 bottom-2 sm:bottom-3 bg-white/95 backdrop-blur-sm text-gray-800 text-xs sm:text-sm font-semibold px-2 sm:px-3 py-1 sm:py-1.5 rounded-full shadow-sm border border-gray-200/60 flex items-center gap-1 z-10">
+                              <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-yellow-400 fill-current" viewBox="0 0 20 20">
+                                <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
+                              </svg>
+                              <span>{service.rating.toFixed(1)}</span>
+                            </div>
+                          )}
+
+                          {service.discount > 0 && (
+                            <div className="absolute top-2 sm:top-3 right-2 sm:right-3 bg-gradient-to-r from-red-500 to-red-600 text-white text-[10px] sm:text-xs font-bold px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg shadow-lg z-10 border-2 border-white/50">
+                                {service.discount}% OFF
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div className="p-3 sm:p-4 lg:p-5 flex-1 flex flex-col">
+                          <div className="mb-3 sm:mb-4 flex-1">
+                            <h3 className="text-base sm:text-lg lg:text-xl font-bold text-gray-900 line-clamp-2 leading-tight mb-1.5 sm:mb-2 group-hover:text-emerald-700 transition-colors">
+                              {service.title}
+                            </h3>
+                            
+                            {service.location && (
+                              <div className="flex items-center gap-1 text-xs sm:text-sm text-gray-600 mb-2 sm:mb-3">
+                                <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                                </svg>
+                                <span className="line-clamp-1">{service.location}</span>
+                              </div>
+                            )}
+                            
+                            <p className="text-gray-600 text-xs sm:text-sm leading-relaxed line-clamp-2 mb-2 sm:mb-3">
+                              {service.description}
+                            </p>
+
+                            {service.reviews > 0 && (
+                              <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs text-gray-600">
+                                <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-500 fill-current" viewBox="0 0 20 20">
+                                  <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
+                                </svg>
+                                <span className="font-semibold text-gray-900">{service.rating.toFixed(1)}</span>
+                                <span className="text-gray-400">•</span>
+                                <span className="text-gray-600">{service.reviews} {service.reviews === 1 ? 'booking' : 'bookings'}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mt-auto pt-3 sm:pt-4 border-t border-gray-100">
+                            <div className="flex items-center justify-between gap-2 sm:gap-3">
+                              <div className="min-w-0 flex-1">
+                                {service.discount > 0 ? (
+                                  <div>
+                                    <div className="flex items-baseline gap-1.5 sm:gap-2 mb-0.5 sm:mb-1 flex-wrap">
+                                      <span className="text-lg sm:text-xl font-bold text-emerald-600">
+                                        ₱{((service.rate || 0) * (1 - service.discount / 100)).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                                      </span>
+                                      <span className="text-xs sm:text-sm text-gray-400 line-through font-medium">
+                                        ₱{(service.rate || 0).toLocaleString()}
+                                      </span>
+                                      <span className="text-[10px] sm:text-xs text-red-600 font-bold bg-red-50 px-1.5 sm:px-2 py-0.5 rounded">
+                                        -{service.discount}%
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] sm:text-xs text-gray-500 whitespace-nowrap">{service.duration}</p>
+                                  </div>
+                                ) : (
+                                  <div>
+                                    <span className="text-lg sm:text-xl font-bold text-emerald-600">₱{(service.rate || 0).toLocaleString()}</span>
+                                    <p className="text-[10px] sm:text-xs text-gray-500 mt-0.5 sm:mt-1 whitespace-nowrap">{service.duration}</p>
+                                  </div>
+                                )}
+                              </div>
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleViewDetails(service);
+                                }}
+                                className="bg-emerald-600 text-white py-2 sm:py-2.5 px-3 sm:px-5 rounded-lg sm:rounded-xl text-xs sm:text-sm font-medium hover:bg-emerald-700 transition-all duration-200 transform hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 whitespace-nowrap flex items-center gap-1.5 sm:gap-2 flex-shrink-0"
+                              >
+                                Book
+                                <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="absolute inset-0 border-2 border-transparent group-hover:border-emerald-200 rounded-2xl pointer-events-none transition-all duration-300"></div>
+                      </div>
+                    </AnimatedCard>
+                  ))}
+                </div>
+              )}
+            </AnimatedSection>
+          )}
+
+          {/* SECTION 3: List of All Services - Shows ALL services (including duplicates from sections 1 & 2) */}
+          <AnimatedSection className="mb-8">
+            <div className="mb-6">
+              <h2 className="text-2xl font-semibold text-gray-900 mb-2">List of all services</h2>
+              <p className="text-sm text-gray-600">Browse all available services</p>
+            </div>
+
+            {/* Services Grid */}
+            <AnimatedGrid className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4 lg:gap-6 xl:gap-8">
+              {loading ? (
+                <div className="col-span-full text-center py-12">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600 mx-auto mb-4"></div>
+                  <p className="text-gray-600">Loading services...</p>
+                </div>
+              ) : filteredServices.length === 0 ? (
+                <div className="col-span-full bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl sm:rounded-2xl shadow-inner p-8 sm:p-12 lg:p-16 text-center border-2 border-dashed border-gray-300">
+                  <div className="mb-4 sm:mb-6">
+                    <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 lg:w-24 lg:h-24 bg-white rounded-full shadow-lg mb-3 sm:mb-4">
+                      <svg className="w-8 h-8 sm:w-10 sm:h-10 lg:w-12 lg:h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                  </div>
+                  <h3 className="text-lg sm:text-xl font-semibold text-gray-900 mb-1.5 sm:mb-2">No services found</h3>
+                  <p className="text-sm sm:text-base text-gray-600 max-w-md mx-auto mb-4 sm:mb-6 px-2">
+                    {searchQuery || selectedCategory !== 'all' || selectedLocation !== 'all' || priceRange !== 'all' 
+                      ? 'Try adjusting your filters to see more results.'
+                      : "We're working on bringing you amazing local services. Check back soon!"}
+                  </p>
+                  {(searchQuery || selectedCategory !== 'all' || selectedLocation !== 'all' || priceRange !== 'all') && (
+                    <button
+                      onClick={() => {
+                        setSelectedCategory('all');
+                        setSelectedLocation('all');
+                        setPriceRange('all');
+                        setSearchQuery('');
+                      }}
+                      className="px-4 sm:px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium text-xs sm:text-sm"
+                    >
+                      Clear Filters
+                    </button>
+                  )}
+                </div>
+              ) : (
+                paginatedServices.map((service) => (
+                <AnimatedCard key={service.id} delay={service.delay}>
+                  <div 
+                    onClick={(e) => {
+                      // Don't trigger if clicking on buttons
+                      if (e.target.closest('button')) {
+                        return;
+                      }
+                      handleViewDetails(service);
+                    }}
+                    className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200/60 hover:border-emerald-200 group h-full flex flex-col cursor-pointer relative w-full"
+                  >
+                    {/* Service Image/Header */}
+                    <div className="relative h-40 sm:h-48 md:h-52 lg:h-56 w-full overflow-hidden bg-gradient-to-r from-emerald-500 to-emerald-600">
+                      {service.image ? (
+                        <>
+                          <img 
+                            src={service.image} 
+                            alt={service.title}
+                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                        </>
+                      ) : (
+                        <div className={`absolute inset-0 bg-gradient-to-br ${service.color || 'from-emerald-500 to-emerald-600'}`}></div>
+                      )}
+                      
+                      {/* Icon Badge */}
+                      <div className="absolute top-2 sm:top-3 left-2 sm:left-3 bg-white/95 backdrop-blur-sm rounded-lg sm:rounded-xl p-2 sm:p-2.5 shadow-sm border border-gray-200/60 z-10">
+                        <span className="text-lg sm:text-xl lg:text-2xl">{service.icon || '✨'}</span>
+                      </div>
+                      
+                      {/* Rating Badge */}
+                      {service.rating > 0 && (
+                        <div className="absolute left-2 sm:left-3 bottom-2 sm:bottom-3 bg-white/95 backdrop-blur-sm text-gray-800 text-xs sm:text-sm font-semibold px-2 sm:px-3 py-1 sm:py-1.5 rounded-full shadow-sm border border-gray-200/60 flex items-center gap-1 z-10">
+                          <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-yellow-400 fill-current" viewBox="0 0 20 20">
+                            <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
+                          </svg>
+                          <span>{service.rating.toFixed(1)}</span>
+                        </div>
+                      )}
+
+                      {/* Discount Badge */}
+                      {service.discount > 0 && (
+                        <div className="absolute top-2 sm:top-3 right-2 sm:right-3 bg-gradient-to-r from-red-500 to-red-600 text-white text-[10px] sm:text-xs font-bold px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg shadow-lg z-10 border-2 border-white/50">
+                          {service.discount}% OFF
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="p-3 sm:p-4 lg:p-5 flex-1 flex flex-col">
+                      {/* Service Info */}
+                      <div className="mb-3 sm:mb-4 flex-1">
+                        <h3 className="text-base sm:text-lg lg:text-xl font-bold text-gray-900 line-clamp-2 leading-tight mb-1.5 sm:mb-2 group-hover:text-emerald-700 transition-colors">
+                          {service.title}
+                        </h3>
+                        
+                        {/* Location */}
+                        {service.location && (
+                          <div className="flex items-center gap-1 text-xs sm:text-sm text-gray-600 mb-2 sm:mb-3">
+                            <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                            </svg>
+                            <span className="line-clamp-1">{service.location}</span>
+                          </div>
+                        )}
+                        
+                        <p className="text-gray-600 text-xs sm:text-sm leading-relaxed line-clamp-2 mb-2 sm:mb-3">
+                          {service.description}
+                        </p>
+
+                        {/* Reviews & Bookings */}
+                        {service.reviews > 0 && (
+                          <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs text-gray-600">
+                            <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-500 fill-current" viewBox="0 0 20 20">
+                              <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/>
+                            </svg>
+                            <span className="font-semibold text-gray-900">{service.rating.toFixed(1)}</span>
+                            <span className="text-gray-400">•</span>
+                            <span className="text-gray-600">{service.reviews} {service.reviews === 1 ? 'booking' : 'bookings'}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Price and CTA */}
+                      <div className="mt-auto pt-3 sm:pt-4 border-t border-gray-100">
+                        <div className="flex items-center justify-between gap-2 sm:gap-3">
+                          <div className="min-w-0 flex-1">
+                            {service.discount > 0 ? (
+                              <div>
+                                <div className="flex items-baseline gap-1.5 sm:gap-2 mb-0.5 sm:mb-1 flex-wrap">
+                                  <span className="text-lg sm:text-xl font-bold text-emerald-600">
+                                    ₱{((service.rate || 0) * (1 - service.discount / 100)).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                                  </span>
+                                  <span className="text-xs sm:text-sm text-gray-400 line-through font-medium">
+                                    ₱{(service.rate || 0).toLocaleString()}
+                                  </span>
+                                  <span className="text-[10px] sm:text-xs text-red-600 font-bold bg-red-50 px-1.5 sm:px-2 py-0.5 rounded">
+                                    -{service.discount}%
+                                  </span>
+                                </div>
+                                <p className="text-[10px] sm:text-xs text-gray-500 whitespace-nowrap">{service.duration}</p>
+                              </div>
+                            ) : (
+                              <div>
+                                <span className="text-lg sm:text-xl font-bold text-emerald-600">₱{(service.rate || 0).toLocaleString()}</span>
+                                <p className="text-[10px] sm:text-xs text-gray-500 mt-0.5 sm:mt-1 whitespace-nowrap">{service.duration}</p>
+                              </div>
+                            )}
+                          </div>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewDetails(service);
+                            }}
+                            className="bg-emerald-600 text-white py-2 sm:py-2.5 px-3 sm:px-5 rounded-lg sm:rounded-xl text-xs sm:text-sm font-medium hover:bg-emerald-700 transition-all duration-200 transform hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 whitespace-nowrap flex items-center gap-1.5 sm:gap-2 flex-shrink-0"
+                          >
+                            Book
+                            <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Hover effect border */}
+                    <div className="absolute inset-0 border-2 border-transparent group-hover:border-emerald-200 rounded-2xl pointer-events-none transition-all duration-300"></div>
+                  </div>
+                </AnimatedCard>
+                ))
+              )}
+            </AnimatedGrid>
+
+            {/* Pagination */}
+            {filteredServices.length > itemsPerPage && (
+              <div className="flex items-center justify-center gap-1.5 sm:gap-2 mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-gray-200">
+                <button
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 sm:px-4 py-1.5 sm:py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm"
+                >
+                  <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  <span className="hidden sm:inline">Previous</span>
+                  <span className="sm:hidden">Prev</span>
+                </button>
+                
+                <div className="flex items-center gap-1 sm:gap-2">
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => {
+                    if (
+                      page === 1 ||
+                      page === totalPages ||
+                      (page >= currentPage - 1 && page <= currentPage + 1)
+                    ) {
+                      return (
+                        <button
+                          key={page}
+                          onClick={() => setCurrentPage(page)}
+                          className={`px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-lg font-medium transition-colors text-xs sm:text-sm ${
+                            currentPage === page
+                              ? 'bg-emerald-600 text-white'
+                              : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      );
+                    } else if (page === currentPage - 2 || page === currentPage + 2) {
+                      return <span key={page} className="px-1 sm:px-2 text-gray-400 text-xs sm:text-sm">...</span>;
+                    }
+                    return null;
+                  })}
+                </div>
+
+                <button
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-3 sm:px-4 py-1.5 sm:py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm"
+                >
+                  <span className="hidden sm:inline">Next</span>
+                  <span className="sm:hidden">Next</span>
+                  <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
               </div>
+            )}
 
-              <button
-                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                disabled={currentPage === totalPages}
-                className="px-3 sm:px-4 py-1.5 sm:py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm"
-              >
-                <span className="hidden sm:inline">Next</span>
-                <span className="sm:hidden">Next</span>
-                <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              </button>
-            </div>
-          )}
-
-          {/* Results info */}
-          {filteredServices.length > 0 && (
-            <div className="text-center mt-3 sm:mt-4 text-xs sm:text-sm text-gray-600">
-              Showing {startIndex + 1} - {Math.min(endIndex, filteredServices.length)} of {filteredServices.length} services
-            </div>
-          )}
+            {/* Results info */}
+            {filteredServices.length > 0 && (
+              <div className="text-center mt-3 sm:mt-4 text-xs sm:text-sm text-gray-600">
+                Showing {startIndex + 1} - {Math.min(endIndex, filteredServices.length)} of {filteredServices.length} services
+              </div>
+            )}
+          </AnimatedSection>
         </section>
       </div>
     </main>
