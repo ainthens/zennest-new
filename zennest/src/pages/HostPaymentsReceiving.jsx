@@ -544,14 +544,32 @@ const HostPaymentsReceiving = () => {
 
       // Fetch credit transactions (reward claims)
       try {
-        const creditTransactionsQuery = query(
-          collection(db, 'transactions'),
-          where('userId', '==', user.uid),
-          where('type', '==', 'credit'),
-          where('status', '==', 'completed'),
-          orderBy('createdAt', 'desc')
-        );
-        const creditSnapshot = await getDocs(creditTransactionsQuery);
+        // Try with orderBy first (requires composite index)
+        let creditSnapshot;
+        try {
+          const creditTransactionsQuery = query(
+            collection(db, 'transactions'),
+            where('userId', '==', user.uid),
+            where('type', '==', 'credit'),
+            where('status', '==', 'completed'),
+            orderBy('createdAt', 'desc')
+          );
+          creditSnapshot = await getDocs(creditTransactionsQuery);
+        } catch (orderByError) {
+          // If index error, fetch without orderBy and sort in memory
+          if (orderByError.code === 'failed-precondition' || orderByError.message?.includes('index')) {
+            console.warn('Firestore index not found for credit transactions. Fetching without orderBy as fallback');
+            const creditTransactionsQuery = query(
+              collection(db, 'transactions'),
+              where('userId', '==', user.uid),
+              where('type', '==', 'credit'),
+              where('status', '==', 'completed')
+            );
+            creditSnapshot = await getDocs(creditTransactionsQuery);
+          } else {
+            throw orderByError;
+          }
+        }
         
         // Get reward names from valid codes collection
         const validCodesRef = collection(db, 'valid codes');
@@ -571,11 +589,12 @@ const HostPaymentsReceiving = () => {
           }
         });
 
+        const creditTransactions = [];
         creditSnapshot.forEach((doc) => {
           const creditData = doc.data();
           const rewardName = creditData.code ? codeToRewardMap.get(creditData.code) : null;
           
-          transactions.push({
+          creditTransactions.push({
             id: doc.id,
             type: 'credit',
             amount: creditData.amount || 0,
@@ -585,55 +604,50 @@ const HostPaymentsReceiving = () => {
             completedAt: creditData.createdAt // Use createdAt as completion date
           });
         });
+
+        // Sort by createdAt descending if we fetched without orderBy
+        creditTransactions.sort((a, b) => {
+          const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 
+                       (a.createdAt instanceof Date ? a.createdAt.getTime() : 0);
+          const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 
+                       (b.createdAt instanceof Date ? b.createdAt.getTime() : 0);
+          return bTime - aTime; // Descending order
+        });
+
+        transactions.push(...creditTransactions);
       } catch (creditError) {
         console.error('Error fetching credit transactions:', creditError);
-        // If orderBy fails, try without it
-        if (creditError.code === 'failed-precondition' || creditError.message?.includes('index')) {
-          try {
-            const creditTransactionsQuery = query(
-              collection(db, 'transactions'),
-              where('userId', '==', user.uid),
-              where('type', '==', 'credit'),
-              where('status', '==', 'completed')
-            );
-            const creditSnapshot = await getDocs(creditTransactionsQuery);
-            
-            // Get reward names from valid codes collection
-            const validCodesRef = collection(db, 'valid codes');
-            const codesQuery = query(
-              validCodesRef,
-              where('hostId', '==', user.uid),
-              where('redeemed', '==', true)
-            );
-            const codesSnapshot = await getDocs(codesQuery);
-            
-            // Create a map of code to reward name
-            const codeToRewardMap = new Map();
-            codesSnapshot.forEach((doc) => {
-              const codeData = doc.data();
-              if (codeData.code && codeData.reward) {
-                codeToRewardMap.set(codeData.code, codeData.reward);
-              }
-            });
+        // Error already handled in try-catch above, continue with other transactions
+      }
 
-            creditSnapshot.forEach((doc) => {
-              const creditData = doc.data();
-              const rewardName = creditData.code ? codeToRewardMap.get(creditData.code) : null;
-              
-              transactions.push({
-                id: doc.id,
-                type: 'credit',
-                amount: creditData.amount || 0,
-                rewardName: rewardName || creditData.description || 'E-wallet Credit',
-                code: creditData.code || null,
-                createdAt: creditData.createdAt,
-                completedAt: creditData.createdAt
-              });
-            });
-          } catch (fallbackError) {
-            console.error('Error in fallback credit query:', fallbackError);
-          }
-        }
+      // Fetch wallet transactions (payouts/withdrawals)
+      try {
+        const walletTransactionsQuery = query(
+          collection(db, 'walletTransactions'),
+          where('userId', '==', user.uid),
+          where('type', '==', 'payout')
+        );
+        const walletSnapshot = await getDocs(walletTransactionsQuery);
+        
+        walletSnapshot.forEach((doc) => {
+          const walletData = doc.data();
+          transactions.push({
+            id: doc.id,
+            type: 'payout',
+            amount: walletData.amount || 0,
+            currency: walletData.currency || 'PHP',
+            status: walletData.status || 'processing',
+            paymentMethod: walletData.paymentMethod || 'paypal',
+            paypalEmail: walletData.paypalEmail || '',
+            payoutBatchId: walletData.payoutBatchId || null,
+            description: walletData.description || 'Cash out to PayPal',
+            createdAt: walletData.createdAt,
+            completedAt: walletData.status === 'completed' ? walletData.updatedAt : walletData.createdAt
+          });
+        });
+      } catch (walletError) {
+        console.error('Error fetching wallet transactions:', walletError);
+        // Continue even if wallet transactions fail
       }
 
       // Sort all transactions by date descending (most recent first)
@@ -657,11 +671,25 @@ const HostPaymentsReceiving = () => {
   // Get PayPal OAuth access token using client credentials
   const getPayPalAccessToken = async () => {
     try {
-      const clientId = import.meta?.env?.VITE_PAYPAL_CLIENT_ID || '';
-      const clientSecret = import.meta?.env?.VITE_PAYPAL_CLIENT_SECRET || '';
+      // Access env vars directly (Vite exposes them at build time)
+      // Use the same method as App.jsx which successfully reads them
+      const clientId = import.meta.env.VITE_PAYPAL_CLIENT_ID || '';
+      // Support both VITE_PAYPAL_CLIENT_SECRET and VITE_PAYPAL_SECRET_KEY for compatibility
+      const clientSecret = import.meta.env.VITE_PAYPAL_CLIENT_SECRET || import.meta.env.VITE_PAYPAL_SECRET_KEY || '';
+
+      // Debug: Log what we found
+      console.log('🔍 PayPal Credentials Check:', {
+        hasClientId: !!clientId,
+        hasClientSecret: !!clientSecret,
+        clientIdLength: clientId.length,
+        clientSecretLength: clientSecret.length,
+        clientIdPreview: clientId ? clientId.substring(0, 20) + '...' : 'NOT FOUND',
+        secretPreview: clientSecret ? clientSecret.substring(0, 10) + '...' : 'NOT FOUND',
+        allEnvKeys: Object.keys(import.meta.env || {}).filter(k => k.includes('PAYPAL'))
+      });
 
       if (!clientId || !clientSecret) {
-        throw new Error('PayPal credentials not configured. Please set VITE_PAYPAL_CLIENT_ID and VITE_PAYPAL_CLIENT_SECRET in your .env file.');
+        throw new Error('PayPal credentials not configured. Please set VITE_PAYPAL_CLIENT_ID and VITE_PAYPAL_SECRET_KEY (or VITE_PAYPAL_CLIENT_SECRET) in your .env file and restart the dev server.');
       }
 
       // PayPal Sandbox OAuth endpoint
@@ -797,13 +825,25 @@ const HostPaymentsReceiving = () => {
       // Calculate remaining balance after cashout
       const remainingBalance = Math.max(0, earnings.availableBalance - amount);
 
+      // Determine transaction status based on PayPal response
+      // PENDING and SUCCESS both mean the payout was successfully initiated and will be processed
+      const paypalStatus = payoutResult.status || 'PROCESSING';
+      const isCompleted = paypalStatus === 'SUCCESS' || paypalStatus === 'PENDING' || paypalStatus === 'COMPLETED';
+      const transactionStatus = isCompleted ? 'completed' : 'processing';
+
+      console.log('📊 Transaction Status:', {
+        paypalStatus,
+        transactionStatus,
+        isCompleted
+      });
+
       // Record transaction in walletTransactions collection
       const walletTransactionRef = await addDoc(collection(db, 'walletTransactions'), {
         userId: user.uid,
         type: 'payout',
         amount: amount,
         currency: 'PHP',
-        status: 'processing',
+        status: transactionStatus,
         paymentMethod: 'paypal',
         paypalEmail: email,
         payoutBatchId: payoutResult.payoutBatchId,
@@ -827,11 +867,11 @@ const HostPaymentsReceiving = () => {
           paypalName: ''
         },
         payoutBatchId: payoutResult.payoutBatchId,
-        status: payoutResult.status === 'SUCCESS' ? 'completed' : 'processing',
-        paypalStatus: payoutResult.status || 'PROCESSING',
+        status: transactionStatus,
+        paypalStatus: paypalStatus,
         remainingBalance: remainingBalance,
         createdAt: serverTimestamp(),
-        processedAt: payoutResult.status === 'SUCCESS' ? serverTimestamp() : null,
+        processedAt: isCompleted ? serverTimestamp() : null,
         payoutResult: payoutResult,
         walletTransactionId: walletTransactionRef.id
       });
@@ -842,7 +882,7 @@ const HostPaymentsReceiving = () => {
         type: 'cashout',
         amount: amount,
         currency: 'PHP',
-        status: payoutResult.status === 'SUCCESS' ? 'completed' : 'processing',
+        status: transactionStatus,
         paymentMethod: 'paypal',
         paypalEmail: email,
         payoutBatchId: payoutResult.payoutBatchId,
@@ -1350,7 +1390,7 @@ const HostPaymentsReceiving = () => {
                   </div>
                 </div>
                 <div className="text-right">
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold capitalize ${getStatusColor(cashOut.status || cashOut.paypalStatus || 'processing')}`}>
+                  <span className={`px-3 py-1 rounded-full text-xs font-semibold capitalize ${getStatusColor(cashOut.status || cashOut.paypalStatus || 'completed')}`}>
                     {cashOut.status || cashOut.paypalStatus || 'processing'}
                   </span>
                   {cashOut.paypalStatus && cashOut.paypalStatus !== cashOut.status && (
@@ -1830,18 +1870,21 @@ const HostPaymentsReceiving = () => {
 const HostPaymentsReceivingWrapper = () => {
   // Get PayPal Client ID from environment variables
   // In Vite, use import.meta.env (process.env is not available in browser)
-  const paypalClientId = import.meta?.env?.VITE_PAYPAL_CLIENT_ID || 
+  // Access directly without optional chaining to match App.jsx behavior
+  const paypalClientId = import.meta.env.VITE_PAYPAL_CLIENT_ID || 
                          'Aa1d32EXWKMFsgmQqm_Xri-h9FP6wDDQ4qqg2oLz2jjogpBxgBDLFdyksTZwooCQWVIy6qMXQwvULw-o';
   
   // Debug: Log the client ID (remove in production)
   useEffect(() => {
+    const envClientId = import.meta.env.VITE_PAYPAL_CLIENT_ID;
     console.log('🔍 [HostPaymentsReceivingWrapper] PayPal Client ID:', paypalClientId ? `✅ Found (${paypalClientId.substring(0, 10)}...)` : '❌ Not found');
     console.log('🔍 [HostPaymentsReceivingWrapper] Client ID source:', {
-      fromImportMeta: !!import.meta?.env?.VITE_PAYPAL_CLIENT_ID,
+      fromImportMeta: !!envClientId,
+      envClientIdValue: envClientId ? envClientId.substring(0, 10) + '...' : 'NOT FOUND',
       usingFallback: paypalClientId === 'Aa1d32EXWKMFsgmQqm_Xri-h9FP6wDDQ4qqg2oLz2jjogpBxgBDLFdyksTZwooCQWVIy6qMXQwvULw-o',
-      allEnvKeys: Object.keys(import.meta?.env || {}).filter(key => key.includes('PAYPAL'))
+      allEnvKeys: Object.keys(import.meta.env || {}).filter(key => key.includes('PAYPAL'))
     });
-    if (!paypalClientId || paypalClientId === 'Aa1d32EXWKMFsgmQqm_Xri-h9FP6wDDQ4qqg2oLz2jjogpBxgBDLFdyksTZwooCQWVIy6qMXQwvULw-o') {
+    if (!envClientId) {
       console.warn('⚠️ PayPal Client ID not found in environment. Using fallback value.');
       console.warn('   To fix: Add VITE_PAYPAL_CLIENT_ID to your .env file and restart the dev server.');
     }
