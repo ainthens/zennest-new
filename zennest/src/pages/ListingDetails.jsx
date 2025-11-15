@@ -2027,7 +2027,7 @@ const ListingDetails = () => {
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-xl font-bold text-gray-900 flex items-center gap-3">
                     <FaStar className="text-yellow-400 fill-current" />
-                    {listing.rating > 0 ? listing.rating.toFixed(1) : reviews.length > 0 ? '0.0' : '5.0'} · {reviews.length} {reviews.length === 1 ? 'review' : 'reviews'}
+                    {listing.rating > 0 ? listing.rating.toFixed(1) : reviews.length > 0 ? '0.0' : '0.0'} · {reviews.length} {reviews.length === 1 ? 'review' : 'reviews'}
                   </h2>
                   {canReview && !showReviewForm && (
                     <button

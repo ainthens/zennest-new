@@ -805,10 +805,24 @@ const HostSettings = () => {
                       <div className="bg-white rounded-lg p-4 border border-gray-200">
                         <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Start Date</p>
                         <p className="text-sm font-bold text-gray-900">
-                          {hostProfile.subscriptionStartDate?.toDate 
-                            ? hostProfile.subscriptionStartDate.toDate().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-                            : new Date(hostProfile.subscriptionStartDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-                          }
+                          {(() => {
+                            try {
+                              let startDate;
+                              if (hostProfile.subscriptionStartDate?.toDate) {
+                                startDate = hostProfile.subscriptionStartDate.toDate();
+                              } else if (hostProfile.subscriptionStartDate instanceof Date) {
+                                startDate = hostProfile.subscriptionStartDate;
+                              } else if (typeof hostProfile.subscriptionStartDate === 'string' || typeof hostProfile.subscriptionStartDate === 'number') {
+                                startDate = new Date(hostProfile.subscriptionStartDate);
+                              } else {
+                                return 'Not set';
+                              }
+                              return startDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+                            } catch (error) {
+                              console.error('Error formatting start date:', error);
+                              return 'Invalid date';
+                            }
+                          })()}
                         </p>
                       </div>
                     )}
@@ -816,28 +830,67 @@ const HostSettings = () => {
                       <div className="bg-white rounded-lg p-4 border border-gray-200">
                         <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">End Date</p>
                         <p className="text-sm font-bold text-gray-900">
-                          {hostProfile.subscriptionEndDate?.toDate 
-                            ? hostProfile.subscriptionEndDate.toDate().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-                            : new Date(hostProfile.subscriptionEndDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-                          }
+                          {(() => {
+                            try {
+                              let endDate;
+                              if (hostProfile.subscriptionEndDate?.toDate) {
+                                endDate = hostProfile.subscriptionEndDate.toDate();
+                              } else if (hostProfile.subscriptionEndDate instanceof Date) {
+                                endDate = hostProfile.subscriptionEndDate;
+                              } else if (typeof hostProfile.subscriptionEndDate === 'string' || typeof hostProfile.subscriptionEndDate === 'number') {
+                                endDate = new Date(hostProfile.subscriptionEndDate);
+                              } else {
+                                return 'Not set';
+                              }
+                              return endDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+                            } catch (error) {
+                              console.error('Error formatting end date:', error);
+                              return 'Invalid date';
+                            }
+                          })()}
                         </p>
+                        {(() => {
+                          try {
+                            let endDate;
+                            if (hostProfile.subscriptionEndDate?.toDate) {
+                              endDate = hostProfile.subscriptionEndDate.toDate();
+                            } else if (hostProfile.subscriptionEndDate instanceof Date) {
+                              endDate = hostProfile.subscriptionEndDate;
+                            } else if (typeof hostProfile.subscriptionEndDate === 'string' || typeof hostProfile.subscriptionEndDate === 'number') {
+                              endDate = new Date(hostProfile.subscriptionEndDate);
+                            } else {
+                              return null;
+                            }
+                            const now = new Date();
+                            const daysRemaining = Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                            if (daysRemaining < 0) {
+                              return <p className="text-xs text-red-600 mt-1 font-semibold">Expired {Math.abs(daysRemaining)} day{Math.abs(daysRemaining) !== 1 ? 's' : ''} ago</p>;
+                            } else if (daysRemaining <= 7) {
+                              return <p className="text-xs text-yellow-600 mt-1 font-semibold">{daysRemaining} day{daysRemaining !== 1 ? 's' : ''} remaining</p>;
+                            } else {
+                              return <p className="text-xs text-gray-500 mt-1">{daysRemaining} day{daysRemaining !== 1 ? 's' : ''} remaining</p>;
+                            }
+                          } catch (error) {
+                            return null;
+                          }
+                        })()}
                       </div>
                     )}
                   </div>
 
                   {/* Listing Usage */}
-                  {listingInfo && (
+                  {listingInfo && listingInfo.current !== undefined && listingInfo.limit !== undefined && (
                     <div className="bg-white rounded-lg p-4 border border-gray-200 mb-4">
                       <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Listing Usage</p>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-gray-700">
-                          {listingInfo.current !== undefined ? `${listingInfo.current} of ${listingInfo.limit === -1 ? '∞' : listingInfo.limit} listings used` : 'Loading...'}
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm text-gray-700 font-medium whitespace-nowrap">
+                          {listingInfo.current} of {listingInfo.limit === -1 ? '∞' : listingInfo.limit} listings used
                         </span>
-                        {listingInfo.limit !== -1 && listingInfo.current !== undefined && (
-                          <div className="flex-1 mx-4 bg-gray-200 rounded-full h-2">
+                        {listingInfo.limit !== -1 && (
+                          <div className="flex-1 mx-4 bg-gray-200 rounded-full h-2.5 min-w-[100px]">
                             <div 
-                              className={`h-2 rounded-full ${
-                                (listingInfo.current / listingInfo.limit) >= 1 
+                              className={`h-2.5 rounded-full transition-all duration-300 ${
+                                listingInfo.current >= listingInfo.limit
                                   ? 'bg-red-500' 
                                   : (listingInfo.current / listingInfo.limit) >= 0.8 
                                   ? 'bg-yellow-500' 
@@ -848,10 +901,24 @@ const HostSettings = () => {
                           </div>
                         )}
                       </div>
-                      {listingInfo.remaining !== undefined && listingInfo.remaining >= 0 && (
-                        <p className="text-xs text-gray-600 mt-2">
-                          {listingInfo.remaining} listing{listingInfo.remaining !== 1 ? 's' : ''} remaining
+                      {listingInfo.remaining !== undefined && (
+                        <p className={`text-xs mt-2 font-semibold ${
+                          listingInfo.remaining === 0 
+                            ? 'text-red-600' 
+                            : listingInfo.remaining <= 2 && listingInfo.remaining > 0
+                            ? 'text-yellow-600'
+                            : 'text-gray-600'
+                        }`}>
+                          {listingInfo.limit === -1 
+                            ? 'Unlimited listings available' 
+                            : listingInfo.remaining === 0
+                            ? 'No listings remaining - upgrade to create more'
+                            : `${listingInfo.remaining} listing${listingInfo.remaining !== 1 ? 's' : ''} remaining`
+                          }
                         </p>
+                      )}
+                      {listingInfo.error && (
+                        <p className="text-xs text-red-600 mt-2 font-semibold">{listingInfo.error}</p>
                       )}
                     </div>
                   )}

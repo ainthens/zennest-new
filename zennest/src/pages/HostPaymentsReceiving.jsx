@@ -37,7 +37,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getHostBookings } from '../services/firestoreService';
-import { processPayPalPayout } from '../services/paypalService';
 import useAuth from '../hooks/useAuth';
 import {
   PayPalScriptProvider
@@ -655,6 +654,117 @@ const HostPaymentsReceiving = () => {
     }
   };
 
+  // Get PayPal OAuth access token using client credentials
+  const getPayPalAccessToken = async () => {
+    try {
+      const clientId = import.meta?.env?.VITE_PAYPAL_CLIENT_ID || '';
+      const clientSecret = import.meta?.env?.VITE_PAYPAL_CLIENT_SECRET || '';
+
+      if (!clientId || !clientSecret) {
+        throw new Error('PayPal credentials not configured. Please set VITE_PAYPAL_CLIENT_ID and VITE_PAYPAL_CLIENT_SECRET in your .env file.');
+      }
+
+      // PayPal Sandbox OAuth endpoint
+      const tokenUrl = 'https://api-m.sandbox.paypal.com/v1/oauth2/token';
+      
+      // Create Basic Auth header
+      const credentials = btoa(`${clientId}:${clientSecret}`);
+      
+      const response = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Accept-Language': 'en_US',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${credentials}`
+        },
+        body: 'grant_type=client_credentials'
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('PayPal OAuth error:', errorText);
+        throw new Error(`Failed to get PayPal access token: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.access_token;
+    } catch (error) {
+      console.error('Error getting PayPal access token:', error);
+      throw error;
+    }
+  };
+
+  // Process PayPal payout directly via PayPal Sandbox API
+  const processPayPalPayoutDirect = async (paypalEmail, amount) => {
+    try {
+      console.log('🔐 Getting PayPal OAuth token...');
+      const accessToken = await getPayPalAccessToken();
+      console.log('✅ PayPal OAuth token obtained');
+
+      // PayPal Sandbox Payouts API endpoint
+      const payoutUrl = 'https://api-m.sandbox.paypal.com/v1/payments/payouts';
+      
+      // Generate unique batch ID
+      const senderBatchId = `PAYOUT-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
+      const payoutData = {
+        sender_batch_header: {
+          sender_batch_id: senderBatchId,
+          email_subject: 'You have a payout from ZenNest',
+          email_message: `You have received a payout of ₱${amount.toFixed(2)} from ZenNest.`
+        },
+        items: [
+          {
+            recipient_type: 'EMAIL',
+            amount: {
+              value: amount.toFixed(2),
+              currency: 'PHP'
+            },
+            receiver: paypalEmail,
+            note: 'Payout from ZenNest',
+            sender_item_id: `PAYOUT-ITEM-${Date.now()}`
+          }
+        ]
+      };
+
+      console.log('💰 Creating PayPal payout:', {
+        paypalEmail,
+        amount,
+        senderBatchId
+      });
+
+      const response = await fetch(payoutUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`
+        },
+        body: JSON.stringify(payoutData)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
+        console.error('PayPal Payout API error:', errorData);
+        throw new Error(errorData.message || errorData.name || `PayPal payout failed: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ PayPal payout created:', result);
+
+      return {
+        success: true,
+        payoutBatchId: result.batch_header?.payout_batch_id || senderBatchId,
+        status: result.batch_header?.batch_status || 'PROCESSING',
+        transactionId: result.items?.[0]?.transaction_id || null,
+        links: result.links || []
+      };
+    } catch (error) {
+      console.error('Error processing PayPal payout:', error);
+      throw error;
+    }
+  };
+
   // Process cashout with PayPal email and amount
   const processCashOut = async (email, amount) => {
     try {
@@ -668,14 +778,10 @@ const HostPaymentsReceiving = () => {
         currency: 'PHP'
       });
 
-      // Process PayPal payout
+      // Process PayPal payout directly via PayPal Sandbox API
       let payoutResult;
       try {
-        payoutResult = await processPayPalPayout(
-          email,
-          amount,
-          'PHP'
-        );
+        payoutResult = await processPayPalPayoutDirect(email, amount);
         console.log('✅ Payout API response:', payoutResult);
       } catch (payoutError) {
         console.error('❌ Payout API error:', payoutError);
@@ -691,17 +797,34 @@ const HostPaymentsReceiving = () => {
       // Calculate remaining balance after cashout
       const remainingBalance = Math.max(0, earnings.availableBalance - amount);
 
-      // Create cash out record in Firestore
+      // Record transaction in walletTransactions collection
+      const walletTransactionRef = await addDoc(collection(db, 'walletTransactions'), {
+        userId: user.uid,
+        type: 'payout',
+        amount: amount,
+        currency: 'PHP',
+        status: 'processing',
+        paymentMethod: 'paypal',
+        paypalEmail: email,
+        payoutBatchId: payoutResult.payoutBatchId,
+        transactionId: payoutResult.transactionId,
+        remainingBalance: remainingBalance,
+        description: `Cash out to PayPal - ${email}`,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      // Also create a cash out record in Firestore for backward compatibility
       const cashOutRef = await addDoc(collection(db, 'cashOuts'), {
         hostId: user.uid,
         amount: amount,
         currency: 'PHP',
         paymentMethod: {
           type: 'paypal',
-          accountName: email.split('@')[0], // Use email username as account name
+          accountName: email.split('@')[0],
           paypalEmail: email,
-          paypalAccountId: '', // Not available without login
-          paypalName: '' // Not available without login
+          paypalAccountId: '',
+          paypalName: ''
         },
         payoutBatchId: payoutResult.payoutBatchId,
         status: payoutResult.status === 'SUCCESS' ? 'completed' : 'processing',
@@ -709,10 +832,11 @@ const HostPaymentsReceiving = () => {
         remainingBalance: remainingBalance,
         createdAt: serverTimestamp(),
         processedAt: payoutResult.status === 'SUCCESS' ? serverTimestamp() : null,
-        payoutResult: payoutResult
+        payoutResult: payoutResult,
+        walletTransactionId: walletTransactionRef.id
       });
 
-      // Also create a transaction record for history tracking
+      // Also create a transaction record for history tracking (backward compatibility)
       await addDoc(collection(db, 'transactions'), {
         userId: user.uid,
         type: 'cashout',
@@ -725,6 +849,7 @@ const HostPaymentsReceiving = () => {
         remainingBalance: remainingBalance,
         description: `Cash out to PayPal - ${email}`,
         cashOutId: cashOutRef.id,
+        walletTransactionId: walletTransactionRef.id,
         createdAt: serverTimestamp()
       });
 

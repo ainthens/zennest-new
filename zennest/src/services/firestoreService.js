@@ -2513,9 +2513,34 @@ export const updateSubscriptionStatus = async (userId, status, paymentId = null,
     }
     
     if (status === 'active') {
-      updateData.subscriptionStartDate = startDate ? Timestamp.fromDate(startDate) : serverTimestamp();
-      if (endDate) {
-        updateData.subscriptionEndDate = Timestamp.fromDate(endDate);
+      // Set start date
+      const actualStartDate = startDate ? (startDate instanceof Date ? startDate : new Date(startDate)) : new Date();
+      updateData.subscriptionStartDate = Timestamp.fromDate(actualStartDate);
+      
+      // Calculate end date if not provided
+      let actualEndDate = endDate;
+      if (!actualEndDate && subscriptionPlan) {
+        // Plan durations: basic = 1 month, pro = 3 months, premium = 12 months
+        const planDurations = {
+          basic: 1,
+          pro: 3,
+          premium: 12
+        };
+        const duration = planDurations[subscriptionPlan] || 1;
+        actualEndDate = new Date(actualStartDate);
+        actualEndDate.setMonth(actualEndDate.getMonth() + duration);
+      }
+      
+      if (actualEndDate) {
+        const endDateObj = actualEndDate instanceof Date ? actualEndDate : new Date(actualEndDate);
+        updateData.subscriptionEndDate = Timestamp.fromDate(endDateObj);
+        
+        console.log('📅 Subscription dates:', {
+          startDate: actualStartDate.toISOString(),
+          endDate: endDateObj.toISOString(),
+          plan: subscriptionPlan,
+          duration: planDurations[subscriptionPlan] || 'unknown'
+        });
       }
     }
 
@@ -2543,15 +2568,32 @@ export const canCreateListing = async (hostId) => {
     // Get host profile
     const hostResult = await getHostProfile(hostId);
     if (!hostResult.success || !hostResult.data) {
-      return { success: false, canCreate: false, error: 'Host profile not found' };
+      return { success: false, canCreate: false, error: 'Host profile not found', current: 0, limit: 0 };
     }
 
     const hostData = hostResult.data;
     
+    // Get subscription plan and listing limit (always calculate these for display)
+    const subscriptionPlan = hostData.subscriptionPlan || 'basic';
+    const listingLimit = getSubscriptionListingLimit(subscriptionPlan);
+
+    // Get current listing count (only count published listings, not drafts)
+    const listingsResult = await getHostListings(hostId);
+    const allListings = listingsResult.success ? listingsResult.data : [];
+    const currentListings = allListings.filter(listing => listing.status === 'published' && !listing.archived).length;
+
+    // Always return listing info for display, even if subscription is inactive
+    const listingInfo = {
+      success: true,
+      current: currentListings,
+      limit: listingLimit,
+      remaining: listingLimit === -1 ? -1 : Math.max(0, listingLimit - currentListings)
+    };
+
     // Check if subscription is active
     if (hostData.subscriptionStatus !== 'active') {
       return { 
-        success: true, 
+        ...listingInfo,
         canCreate: false, 
         error: 'Subscription is not active. Please renew your subscription to create listings.',
         reason: 'inactive_subscription'
@@ -2564,7 +2606,7 @@ export const canCreateListing = async (hostId) => {
       const now = new Date();
       if (now > endDate) {
         return { 
-          success: true, 
+          ...listingInfo,
           canCreate: false, 
           error: 'Subscription has expired. Please renew your subscription to create listings.',
           reason: 'expired_subscription'
@@ -2572,41 +2614,39 @@ export const canCreateListing = async (hostId) => {
       }
     }
 
-    // Get subscription plan
-    const subscriptionPlan = hostData.subscriptionPlan || 'basic';
-    const listingLimit = getSubscriptionListingLimit(subscriptionPlan);
-
     // If unlimited, allow creation
     if (listingLimit === -1) {
-      return { success: true, canCreate: true, remaining: -1 };
+      return { 
+        ...listingInfo,
+        canCreate: true, 
+        remaining: -1 
+      };
     }
-
-    // Get current listing count
-    const listingsResult = await getHostListings(hostId);
-    const currentListings = listingsResult.success ? listingsResult.data.length : 0;
 
     // Check if limit reached
     if (currentListings >= listingLimit) {
       return { 
-        success: true, 
+        ...listingInfo,
         canCreate: false, 
         error: `You have reached your listing limit of ${listingLimit}. Please upgrade your subscription to create more listings.`,
-        reason: 'limit_reached',
-        current: currentListings,
-        limit: listingLimit
+        reason: 'limit_reached'
       };
     }
 
     return { 
-      success: true, 
-      canCreate: true, 
-      remaining: listingLimit - currentListings,
-      current: currentListings,
-      limit: listingLimit
+      ...listingInfo,
+      canCreate: true
     };
   } catch (error) {
     console.error('Error checking listing limit:', error);
-    return { success: false, canCreate: false, error: error.message };
+    return { 
+      success: false, 
+      canCreate: false, 
+      error: error.message,
+      current: 0,
+      limit: 0,
+      remaining: 0
+    };
   }
 };
 
