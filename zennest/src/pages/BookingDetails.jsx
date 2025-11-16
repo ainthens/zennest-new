@@ -56,6 +56,7 @@ const BookingDetails = () => {
   const [hasReviewed, setHasReviewed] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [submittingReview, setSubmittingReview] = useState(false);
+  // ADD: review form state (fixes ReferenceError)
   const [reviewForm, setReviewForm] = useState({
     rating: 5,
     cleanliness: 5,
@@ -66,6 +67,12 @@ const BookingDetails = () => {
     value: 5,
     comment: ''
   });
+  // Suggestions state
+  const [canSuggest, setCanSuggest] = useState(false);
+  const [hasSuggested, setHasSuggested] = useState(false);
+  const [suggestionText, setSuggestionText] = useState('');
+  const [submittingSuggestion, setSubmittingSuggestion] = useState(false);
+  // ADD: Share modal state (fixes ReferenceError)
   const [showShareModal, setShowShareModal] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
 
@@ -136,6 +143,9 @@ const BookingDetails = () => {
             
             // Check if user can review this booking
             checkCanReview(bookingWithDates, listingData);
+
+            // Check if user can suggest for this booking
+            checkCanSuggest(bookingWithDates, listingData);
             
             // Fetch host profile
             if (listingSnap.data().hostId) {
@@ -225,6 +235,36 @@ const BookingDetails = () => {
     
     setHasReviewed(userHasReviewed);
     setCanReview(!userHasReviewed);
+  };
+
+  const checkCanSuggest = (booking, listingData) => {
+    if (!user?.uid || !booking) {
+      setCanSuggest(false);
+      setHasSuggested(false);
+      return;
+    }
+
+    if (booking.status === 'cancelled') {
+      setCanSuggest(false);
+      setHasSuggested(!!booking.suggestion);
+      return;
+    }
+
+    // Completed if checkout passed OR status explicitly completed/confirmed without dates
+    let isCompleted = false;
+    const checkInDate = parseDate(booking.checkIn);
+    const checkOutDate = parseDate(booking.checkOut);
+
+    if (checkInDate && checkOutDate) {
+      const now = new Date();
+      isCompleted = now > checkOutDate;
+    } else {
+      isCompleted = booking.status === 'confirmed' || booking.status === 'completed';
+    }
+
+    const alreadySuggested = !!booking.suggestion;
+    setHasSuggested(alreadySuggested);
+    setCanSuggest(isCompleted && !alreadySuggested);
   };
 
   const getCategoryLabel = (category) => {
@@ -361,6 +401,78 @@ const BookingDetails = () => {
       alert('Failed to submit review. Please try again.');
     } finally {
       setSubmittingReview(false);
+    }
+  };
+
+  const handleSuggestionQuickFill = (text) => {
+    setSuggestionText(text);
+  };
+
+  const handleSuggestionSubmit = async (e) => {
+    e?.preventDefault();
+    if (!user?.uid || !booking?.id || !listing?.id) return;
+    const text = suggestionText.trim();
+    if (!text) {
+      alert('Please enter a suggestion or choose a quick suggestion.');
+      return;
+    }
+    if (hasSuggested) {
+      alert('You have already submitted a suggestion for this booking.');
+      return;
+    }
+
+    try {
+      setSubmittingSuggestion(true);
+
+      // Update booking doc
+      const bookingRef = doc(db, 'bookings', booking.id);
+      await updateDoc(bookingRef, {
+        suggestion: text,
+        suggestionCreatedAt: Timestamp.now(),
+        updatedAt: serverTimestamp()
+      });
+
+      // Append to listing.suggestions[]
+      const listingRef = doc(db, 'listings', listing.id);
+      const listingSnap = await getDoc(listingRef);
+      if (!listingSnap.exists()) {
+        throw new Error('Listing not found');
+      }
+      const currentData = listingSnap.data();
+      const currentSuggestions = Array.isArray(currentData.suggestions) ? currentData.suggestions : [];
+
+      const newEntry = {
+        guestId: user.uid,
+        bookingId: booking.id,
+        text,
+        createdAt: Timestamp.now()
+      };
+
+      const alreadyInListing = currentSuggestions.some(s => s.bookingId === booking.id);
+      const updatedSuggestions = alreadyInListing
+        ? currentSuggestions
+        : [...currentSuggestions, newEntry];
+
+      await updateDoc(listingRef, {
+        suggestions: updatedSuggestions,
+        updatedAt: serverTimestamp()
+      });
+
+      // Local state updates
+      setHasSuggested(true);
+      setCanSuggest(false);
+      setSuggestionText('');
+      setBooking(prev => ({
+        ...prev,
+        suggestion: text,
+        suggestionCreatedAt: new Date()
+      }));
+      alert('Thanks for your feedback! Your suggestion was submitted.');
+    } catch (error) {
+      console.error('Error submitting suggestion:', error);
+      alert('Failed to submit suggestion. Please try again.');
+    } finally {
+      setSubmittingSuggestion(false);
     }
   };
 
@@ -1069,6 +1181,92 @@ const BookingDetails = () => {
                       <FaStar className="w-12 h-12 mx-auto mb-3 text-gray-300" />
                       <p className="text-sm">You can leave a review after your booking is completed</p>
                     </div>
+                  )}
+                </div>
+              )}
+
+              {/* Suggestions & Feedback Section */}
+              {listing && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                      <FaInfoCircle className="text-emerald-600" />
+                      Suggestions & Feedback
+                    </h3>
+                  </div>
+
+                  {hasSuggested ? (
+                    <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
+                      <p className="text-sm text-emerald-700 font-semibold mb-1">Your suggestion</p>
+                      <p className="text-gray-800">{booking?.suggestion}</p>
+                      {booking?.suggestionCreatedAt && (
+                        <p className="text-xs text-gray-500 mt-2">
+                          Submitted on {formatDateTime(booking.suggestionCreatedAt)}
+                        </p>
+                      )}
+                    </div>
+                  ) : canSuggest ? (
+                    <form onSubmit={handleSuggestionSubmit} className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Share a suggestion to help improve future stays (optional)
+                        </label>
+                        <textarea
+                          value={suggestionText}
+                          onChange={(e) => setSuggestionText(e.target.value)}
+                          placeholder="Type your suggestion..."
+                          rows={4}
+                          className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-emerald-500 focus:outline-none resize-none"
+                          disabled={submittingSuggestion}
+                        />
+                      </div>
+
+                      {/* Quick suggestion chips */}
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          'Improve cleanliness',
+                          'Better amenities',
+                          'More responsive host',
+                          'Great stay, nothing to improve'
+                        ].map((label) => (
+                          <button
+                            type="button"
+                            key={label}
+                            onClick={() => handleSuggestionQuickFill(label)}
+                            className="px-3 py-1.5 text-sm rounded-full border border-gray-300 hover:border-emerald-500 hover:text-emerald-700 transition-colors"
+                            disabled={submittingSuggestion}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex gap-3 pt-1">
+                        <button
+                          type="submit"
+                          disabled={submittingSuggestion || !suggestionText.trim()}
+                          className="px-6 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {submittingSuggestion ? 'Submitting...' : 'Submit Suggestion'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSuggestionText('')}
+                          disabled={submittingSuggestion}
+                          className="px-6 py-3 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Clear
+                        </button>
+                      </div>
+
+                      <p className="text-xs text-gray-500">
+                        You can submit one suggestion per completed booking.
+                      </p>
+                    </form>
+                  ) : (
+                    <p className="text-sm text-gray-500">
+                      Suggestions can be submitted after your booking is completed.
+                    </p>
                   )}
                 </div>
               )}

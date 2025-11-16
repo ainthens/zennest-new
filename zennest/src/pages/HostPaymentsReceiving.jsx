@@ -546,14 +546,14 @@ const HostPaymentsReceiving = () => {
       try {
         // Try with orderBy first (requires composite index)
         let creditSnapshot;
-        try {
-          const creditTransactionsQuery = query(
-            collection(db, 'transactions'),
-            where('userId', '==', user.uid),
-            where('type', '==', 'credit'),
-            where('status', '==', 'completed'),
-            orderBy('createdAt', 'desc')
-          );
+      try {
+        const creditTransactionsQuery = query(
+          collection(db, 'transactions'),
+          where('userId', '==', user.uid),
+          where('type', '==', 'credit'),
+          where('status', '==', 'completed'),
+          orderBy('createdAt', 'desc')
+        );
           creditSnapshot = await getDocs(creditTransactionsQuery);
         } catch (orderByError) {
           // If index error, fetch without orderBy and sort in memory
@@ -621,18 +621,18 @@ const HostPaymentsReceiving = () => {
       }
 
       // Fetch wallet transactions (payouts/withdrawals)
-      try {
+          try {
         const walletTransactionsQuery = query(
           collection(db, 'walletTransactions'),
-          where('userId', '==', user.uid),
+              where('userId', '==', user.uid),
           where('type', '==', 'payout')
-        );
+            );
         const walletSnapshot = await getDocs(walletTransactionsQuery);
-        
+            
         walletSnapshot.forEach((doc) => {
           const walletData = doc.data();
-          transactions.push({
-            id: doc.id,
+              transactions.push({
+                id: doc.id,
             type: 'payout',
             amount: walletData.amount || 0,
             currency: walletData.currency || 'PHP',
@@ -643,8 +643,8 @@ const HostPaymentsReceiving = () => {
             description: walletData.description || 'Cash out to PayPal',
             createdAt: walletData.createdAt,
             completedAt: walletData.status === 'completed' ? walletData.updatedAt : walletData.createdAt
-          });
-        });
+              });
+            });
       } catch (walletError) {
         console.error('Error fetching wallet transactions:', walletError);
         // Continue even if wallet transactions fail

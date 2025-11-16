@@ -58,13 +58,71 @@ const HostDashboardOverview = () => {
       const publishedListings = listings.filter(l => l.status === 'published');
       const draftListings = listings.filter(l => l.status === 'draft');
       const totalViews = listings.reduce((sum, l) => sum + (l.views || 0), 0);
-      const totalRating = listings.reduce((sum, l) => sum + (l.rating || 0), 0);
-      const avgRating = publishedListings.length > 0 ? totalRating / publishedListings.length : 0;
+      
+      // NEW: Debug logging to see what's in listings
+      console.log('🔍 DEBUG: Total listings:', listings.length);
+      listings.forEach((listing, idx) => {
+        console.log(`📝 Listing ${idx + 1}:`, {
+          id: listing.id,
+          title: listing.title,
+          hasReviews: !!listing.reviews,
+          reviewsType: typeof listing.reviews,
+          reviewsIsArray: Array.isArray(listing.reviews),
+          reviewsLength: listing.reviews?.length || 0,
+          reviews: listing.reviews,
+          allKeys: Object.keys(listing)
+        });
+      });
+      
+      // Calculate average rating from listing reviews AND bookings
+      let totalRatingSum = 0;
+      let totalReviewCount = 0;
+      
+      // Method 1: Check listings.reviews[]
+      listings.forEach(listing => {
+        if (Array.isArray(listing.reviews) && listing.reviews.length > 0) {
+          listing.reviews.forEach(review => {
+            if (review.rating && typeof review.rating === 'number') {
+              console.log('✅ Found review in listing.reviews:', {
+                listingId: listing.id,
+                rating: review.rating,
+                guestId: review.guestId
+              });
+              totalRatingSum += review.rating;
+              totalReviewCount++;
+            }
+          });
+        }
+      });
 
-      // Get bookings
+      // Method 2: Also check bookings for reviews (fallback)
       const bookingsResult = await getHostBookings(user.uid);
       const bookings = bookingsResult.data || [];
       
+      console.log('🔍 DEBUG: Total bookings:', bookings.length);
+      bookings.forEach((booking, idx) => {
+        if (booking.rating && typeof booking.rating === 'number') {
+          console.log('✅ Found review in booking:', {
+            bookingId: booking.id,
+            listingId: booking.listingId,
+            rating: booking.rating,
+            guestId: booking.guestId
+          });
+          totalRatingSum += booking.rating;
+          totalReviewCount++;
+        }
+      });
+      
+      const avgRating = totalReviewCount > 0 ? totalRatingSum / totalReviewCount : 0;
+      
+      console.log('📊 Rating Calculation:', {
+        totalListings: listings.length,
+        totalBookings: bookings.length,
+        totalReviews: totalReviewCount,
+        totalRatingSum,
+        averageRating: avgRating
+      });
+
       // Helper function to normalize dates to start of day (local time)
       const normalizeDate = (date) => {
         if (!date) return null;
@@ -90,8 +148,6 @@ const HostDashboardOverview = () => {
           return null;
         }
         // Create a new Date object normalized to local midnight
-        // Use UTC methods to get the date components, then create a local Date
-        // This ensures we're comparing the calendar date, not the time
         const year = date.getFullYear();
         const month = date.getMonth();
         const day = date.getDate();
@@ -105,38 +161,23 @@ const HostDashboardOverview = () => {
       // Debug: Log bookings and dates
       console.log('📅 Today:', today);
       console.log('📅 All bookings:', bookings.length);
-      bookings.forEach((booking, idx) => {
-        console.log(`Booking ${idx + 1}:`, {
-          id: booking.id,
-          checkIn: booking.checkIn,
-          checkInType: typeof booking.checkIn,
-          status: booking.status,
-          normalized: normalizeDate(booking.checkIn)
-        });
-      });
       
       // Filter bookings for today - include confirmed and completed bookings
       const todayBookingsList = bookings.filter(booking => {
         if (!booking.checkIn) {
-          console.log('❌ Booking has no checkIn:', booking.id);
           return false;
         }
         // Only include confirmed or completed bookings
         if (booking.status !== 'confirmed' && booking.status !== 'completed') {
-          console.log('❌ Booking status not confirmed/completed:', booking.id, booking.status);
           return false;
         }
         
         const checkInDate = normalizeDate(booking.checkIn);
         if (!checkInDate || !today) {
-          console.log('❌ Could not normalize date:', booking.id, { checkInDate, today });
           return false;
         }
         
         const isToday = checkInDate.getTime() === today.getTime();
-        if (isToday) {
-          console.log('✅ Booking is today:', booking.id, { checkInDate, today });
-        }
         // Compare dates (both normalized to midnight)
         return isToday;
       });
@@ -178,6 +219,7 @@ const HostDashboardOverview = () => {
         upcomingBookings: upcomingBookingsList.length,
         totalEarnings: totalEarnings,
         averageRating: avgRating,
+        totalReviews: totalReviewCount,
         totalViews: totalViews
       });
 
@@ -283,7 +325,7 @@ const HostDashboardOverview = () => {
       iconBg: 'bg-orange-100',
       iconColor: 'text-orange-600',
       change: stats.averageRating > 4.5 ? { value: '+0.2', trend: 'up' } : stats.averageRating > 0 ? { value: '0.0', trend: 'neutral' } : null,
-      subtitle: 'Based on reviews',
+      subtitle: stats.totalReviews > 0 ? `${stats.totalReviews} review${stats.totalReviews === 1 ? '' : 's'}` : 'No reviews yet',
       cta: stats.averageRating === 0 ? { text: 'Get Your First Review', icon: FaShare, action: () => navigate('/host/listings') } : null,
       clickable: true
     },
