@@ -98,27 +98,45 @@ const ReservationsList = ({ showToast }) => {
   const handleExportPDF = () => {
     try {
       const columns = [
-        { key: 'bookingId', label: 'Booking ID', width: 1 },
-        { key: 'guestName', label: 'Guest', width: 2 },
-        { key: 'listingTitle', label: 'Listing', width: 2 },
-        { key: 'checkIn', label: 'Check-in', width: 1 },
-        { key: 'checkOut', label: 'Check-out', width: 1 },
-        { key: 'status', label: 'Status', width: 1 },
-        { key: 'paymentStatus', label: 'Payment', width: 1 },
-        { key: 'createdAt', label: 'Created', width: 1 }
+        { key: 'bookingId', label: 'Booking ID', width: 1.2 },
+        { key: 'guestName', label: 'Guest', width: 2.5 },
+        { key: 'listingTitle', label: 'Listing Title', width: 2.5 },
+        { key: 'checkIn', label: 'Check-in Date', width: 1.3 },
+        { key: 'checkOut', label: 'Check-out Date', width: 1.3 },
+        { key: 'status', label: 'Status', width: 1.2 },
+        { key: 'paymentStatus', label: 'Payment Status', width: 1.5 },
+        { key: 'createdAt', label: 'Created At', width: 1.3 }
       ];
+
+      // Helper function to format dates properly
+      const formatDate = (date) => {
+        if (!date) return 'N/A';
+        const dateObj = date?.toDate ? date.toDate() : new Date(date);
+        if (isNaN(dateObj.getTime())) return 'N/A';
+        return dateObj.toLocaleDateString('en-US', { 
+          year: 'numeric', 
+          month: 'short', 
+          day: 'numeric' 
+        });
+      };
+
+      // Helper function to capitalize status
+      const capitalizeStatus = (status) => {
+        if (!status || status === 'N/A') return 'N/A';
+        return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+      };
 
       const rows = filteredBookings.map(b => {
         const paymentStatus = getPaymentStatus(b);
         return {
           bookingId: b.id?.substring(0, 8) || 'N/A',
-          guestName: `${b.guestName || 'Guest'}${b.guestEmail ? ` (${b.guestEmail})` : ''}`,
+          guestName: `${b.guestName || 'Guest'}${b.guestEmail ? `\n${b.guestEmail}` : ''}`,
           listingTitle: b.listingTitle || 'Unknown',
-          checkIn: b.checkIn?.toDate ? b.checkIn.toDate().toLocaleDateString() : 'N/A',
-          checkOut: b.checkOut?.toDate ? b.checkOut.toDate().toLocaleDateString() : 'N/A',
-          status: b.status || 'N/A',
-          paymentStatus: paymentStatus || 'N/A',
-          createdAt: b.createdAt?.toDate ? b.createdAt.toDate().toLocaleDateString() : 'N/A'
+          checkIn: formatDate(b.checkIn),
+          checkOut: formatDate(b.checkOut),
+          status: capitalizeStatus(b.status),
+          paymentStatus: capitalizeStatus(paymentStatus),
+          createdAt: formatDate(b.createdAt)
         };
       });
 

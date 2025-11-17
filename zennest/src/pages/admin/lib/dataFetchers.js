@@ -186,6 +186,39 @@ export async function saveTermsAndConditions(content, userId = 'admin') {
 }
 
 /**
+ * Fetch house rules
+ */
+export async function fetchHouseRules() {
+  try {
+    const houseRulesDoc = await getDoc(doc(db, 'admin', 'houseRules'));
+    if (houseRulesDoc.exists()) {
+      return houseRulesDoc.data().content || '';
+    }
+    return '';
+  } catch (error) {
+    console.error('Error fetching house rules:', error);
+    throw error;
+  }
+}
+
+/**
+ * Save house rules
+ */
+export async function saveHouseRules(content, userId = 'admin') {
+  try {
+    await setDoc(doc(db, 'admin', 'houseRules'), {
+      content: content,
+      lastUpdated: new Date().toISOString(),
+      updatedBy: userId
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error saving house rules:', error);
+    throw error;
+  }
+}
+
+/**
  * Fetch admin settings (fee percentage and balance)
  */
 export async function fetchAdminSettings() {
@@ -389,14 +422,49 @@ export async function fetchReportData() {
 
     const usersData = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     const listingsData = listingsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    const bookingsData = bookingsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const rawBookingsData = bookingsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    // Build user map for guest information
+    const userMap = {};
+    usersData.forEach(user => {
+      const guestName = 
+        (user.firstName && user.lastName) 
+          ? `${user.firstName} ${user.lastName}` 
+          : user.displayName 
+          || user.name 
+          || (user.email ? user.email.split('@')[0] : 'Guest');
+      
+      userMap[user.id] = {
+        name: guestName,
+        email: user.email || ''
+      };
+    });
+
+    // Build listing map for listing titles
+    const listingMap = {};
+    listingsData.forEach(listing => {
+      listingMap[listing.id] = listing.title || 'Unknown';
+    });
+
+    // Enrich bookings with guest and listing information
+    const bookingsData = rawBookingsData.map(booking => {
+      const guestInfo = booking.guestId ? userMap[booking.guestId] : null;
+      const listingTitle = booking.listingId ? listingMap[booking.listingId] : null;
+
+      return {
+        ...booking,
+        guestName: booking.guestName || guestInfo?.name || 'Guest',
+        guestEmail: booking.guestEmail || guestInfo?.email || '',
+        listingTitle: booking.listingTitle || listingTitle || 'Unknown'
+      };
+    });
 
     // Categorize bookings
     const now = new Date();
     const completedBookings = bookingsData.filter(b => b.status === 'completed');
     const cancelledBookings = bookingsData.filter(b => b.status === 'cancelled');
     const upcomingBookings = bookingsData.filter(b => {
-      if (b.status !== 'confirmed') return false;
+      if (b.status !== 'confirmed' && b.status !== 'pending' && b.status !== 'pending_approval') return false;
       const checkIn = parseDate(b.checkIn);
       return checkIn && checkIn > now;
     });

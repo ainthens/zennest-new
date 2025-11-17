@@ -316,11 +316,16 @@ export const getHostListings = async (hostId) => {
           });
         });
         
-        // Sort by createdAt descending in memory
+        // Sort by createdAt descending in memory (with safe handling for missing dates)
         listings.sort((a, b) => {
-          const dateA = a.createdAt instanceof Date ? a.createdAt.getTime() : 0;
-          const dateB = b.createdAt instanceof Date ? b.createdAt.getTime() : 0;
-          return dateB - dateA; // Descending order
+          try {
+            const dateA = a.createdAt instanceof Date ? a.createdAt.getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+            const dateB = b.createdAt instanceof Date ? b.createdAt.getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+            return dateB - dateA; // Descending order
+          } catch (e) {
+            console.warn('Error sorting listings by createdAt:', e);
+            return 0; // Keep original order if sorting fails
+          }
         });
         
         return { success: true, data: listings };
@@ -369,12 +374,45 @@ export const getPublishedListings = async (category = null) => {
         if (data.archived || data.status === 'archived') {
           return; // Skip archived listings
         }
+        // Safely handle createdAt - it might be null/undefined for very new listings
+        let createdAtDate = new Date(0); // Default to epoch
+        if (data.createdAt) {
+          if (data.createdAt?.toDate && typeof data.createdAt.toDate === 'function') {
+            try {
+              createdAtDate = data.createdAt.toDate();
+            } catch (e) {
+              console.warn('Error converting createdAt timestamp for listing', doc.id, e);
+              createdAtDate = new Date(0);
+            }
+          } else if (data.createdAt instanceof Date) {
+            createdAtDate = data.createdAt;
+          } else if (typeof data.createdAt === 'string' || typeof data.createdAt === 'number') {
+            createdAtDate = new Date(data.createdAt);
+          }
+        }
+        
+        // Safely handle updatedAt
+        let updatedAtDate = null;
+        if (data.updatedAt) {
+          if (data.updatedAt?.toDate && typeof data.updatedAt.toDate === 'function') {
+            try {
+              updatedAtDate = data.updatedAt.toDate();
+            } catch (e) {
+              console.warn('Error converting updatedAt timestamp for listing', doc.id, e);
+            }
+          } else if (data.updatedAt instanceof Date) {
+            updatedAtDate = data.updatedAt;
+          } else if (typeof data.updatedAt === 'string' || typeof data.updatedAt === 'number') {
+            updatedAtDate = new Date(data.updatedAt);
+          }
+        }
+        
         listings.push({ 
           id: doc.id, 
           ...data,
-          // Handle Timestamp conversion for display
-          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt || new Date(0),
-          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt,
+          // Handle Timestamp conversion for display with safe defaults
+          createdAt: createdAtDate,
+          updatedAt: updatedAtDate,
           // Include new fields: completedBookingsCount, province, coords
           // All fields have safe defaults - listings are valid even if these are missing
           completedBookingsCount: data.completedBookingsCount || 0,
@@ -413,12 +451,45 @@ export const getPublishedListings = async (category = null) => {
           if (data.archived || data.status === 'archived') {
             return; // Skip archived listings
           }
+          // Safely handle createdAt - it might be null/undefined for very new listings
+          let createdAtDate = new Date(0); // Default to epoch
+          if (data.createdAt) {
+            if (data.createdAt?.toDate && typeof data.createdAt.toDate === 'function') {
+              try {
+                createdAtDate = data.createdAt.toDate();
+              } catch (e) {
+                console.warn('Error converting createdAt timestamp for listing', doc.id, e);
+                createdAtDate = new Date(0);
+              }
+            } else if (data.createdAt instanceof Date) {
+              createdAtDate = data.createdAt;
+            } else if (typeof data.createdAt === 'string' || typeof data.createdAt === 'number') {
+              createdAtDate = new Date(data.createdAt);
+            }
+          }
+          
+          // Safely handle updatedAt
+          let updatedAtDate = null;
+          if (data.updatedAt) {
+            if (data.updatedAt?.toDate && typeof data.updatedAt.toDate === 'function') {
+              try {
+                updatedAtDate = data.updatedAt.toDate();
+              } catch (e) {
+                console.warn('Error converting updatedAt timestamp for listing', doc.id, e);
+              }
+            } else if (data.updatedAt instanceof Date) {
+              updatedAtDate = data.updatedAt;
+            } else if (typeof data.updatedAt === 'string' || typeof data.updatedAt === 'number') {
+              updatedAtDate = new Date(data.updatedAt);
+            }
+          }
+          
           listings.push({ 
             id: doc.id, 
             ...data,
-            // Handle Timestamp conversion for display
-            createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt || new Date(0),
-            updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt,
+            // Handle Timestamp conversion for display with safe defaults
+            createdAt: createdAtDate,
+            updatedAt: updatedAtDate,
             // Include new fields: completedBookingsCount, province, coords
             // All fields have safe defaults - listings are valid even if these are missing
             completedBookingsCount: data.completedBookingsCount || 0,
@@ -428,11 +499,16 @@ export const getPublishedListings = async (category = null) => {
           });
         });
         
-        // Sort by createdAt descending in memory
+        // Sort by createdAt descending in memory (with safe handling for missing dates)
         listings.sort((a, b) => {
-          const dateA = a.createdAt instanceof Date ? a.createdAt.getTime() : 0;
-          const dateB = b.createdAt instanceof Date ? b.createdAt.getTime() : 0;
-          return dateB - dateA; // Descending order
+          try {
+            const dateA = a.createdAt instanceof Date ? a.createdAt.getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+            const dateB = b.createdAt instanceof Date ? b.createdAt.getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+            return dateB - dateA; // Descending order
+          } catch (e) {
+            console.warn('Error sorting listings by createdAt:', e);
+            return 0; // Keep original order if sorting fails
+          }
         });
         
         return { success: true, data: listings };
@@ -1737,7 +1813,11 @@ export const createVoucher = async (hostId, voucherData) => {
       claimedBy: null,
       claimedAt: null,
       usedAt: null,
-      expirationDate: voucherData.expirationDate ? Timestamp.fromDate(new Date(voucherData.expirationDate)) : null,
+      // Support new date range format
+      startDate: voucherData.startDate ? Timestamp.fromDate(new Date(voucherData.startDate)) : null,
+      endDate: voucherData.endDate ? Timestamp.fromDate(new Date(voucherData.endDate)) : null,
+      // Keep expirationDate for backward compatibility (use endDate if available)
+      expirationDate: voucherData.endDate ? Timestamp.fromDate(new Date(voucherData.endDate)) : (voucherData.expirationDate ? Timestamp.fromDate(new Date(voucherData.expirationDate)) : null),
       listingId: voucherData.listingId || null, // Optional: restrict to specific listing
       usageLimit: voucherData.usageLimit || 1, // Number of times voucher can be used
       usageCount: 0, // Track how many times it's been used
@@ -1791,6 +1871,8 @@ export const getVouchers = async (userId, userRole = 'guest') => {
         id: doc.id,
         ...doc.data(),
         createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : doc.data().createdAt,
+        startDate: doc.data().startDate?.toDate ? doc.data().startDate.toDate() : doc.data().startDate,
+        endDate: doc.data().endDate?.toDate ? doc.data().endDate.toDate() : doc.data().endDate,
         expirationDate: doc.data().expirationDate?.toDate ? doc.data().expirationDate.toDate() : doc.data().expirationDate,
         claimedAt: doc.data().claimedAt?.toDate ? doc.data().claimedAt.toDate() : doc.data().claimedAt,
         usedAt: doc.data().usedAt?.toDate ? doc.data().usedAt.toDate() : doc.data().usedAt
@@ -1823,6 +1905,8 @@ export const getVouchers = async (userId, userRole = 'guest') => {
         id: doc.id,
         ...doc.data(),
         createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : doc.data().createdAt,
+        startDate: doc.data().startDate?.toDate ? doc.data().startDate.toDate() : doc.data().startDate,
+        endDate: doc.data().endDate?.toDate ? doc.data().endDate.toDate() : doc.data().endDate,
         expirationDate: doc.data().expirationDate?.toDate ? doc.data().expirationDate.toDate() : doc.data().expirationDate,
         claimedAt: doc.data().claimedAt?.toDate ? doc.data().claimedAt.toDate() : doc.data().claimedAt,
         usedAt: doc.data().usedAt?.toDate ? doc.data().usedAt.toDate() : doc.data().usedAt

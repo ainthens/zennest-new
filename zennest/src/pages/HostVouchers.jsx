@@ -1,6 +1,8 @@
 // src/pages/HostVouchers.jsx
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
 import { createVoucher, getVouchers, deleteVoucher } from '../services/firestoreService';
 import useAuth from '../hooks/useAuth';
 import Loading from '../components/Loading';
@@ -31,7 +33,8 @@ const HostVouchers = () => {
   
   // Form state
   const [discountPercentage, setDiscountPercentage] = useState(10);
-  const [expirationDate, setExpirationDate] = useState('');
+  const [startDate, setStartDate] = useState(null); // Start date of voucher availability
+  const [endDate, setEndDate] = useState(null); // End date of voucher availability
   const [usageLimit, setUsageLimit] = useState(1);
   const [formError, setFormError] = useState('');
 
@@ -84,14 +87,30 @@ const HostVouchers = () => {
         return;
       }
 
-      // Validate expiration date if provided
-      if (expirationDate) {
-        const expDate = new Date(expirationDate);
-        if (expDate < new Date()) {
-          setFormError('Expiration date must be in the future');
-          setCreating(false);
-          return;
-        }
+      // Validate date range (required)
+      if (!startDate || !endDate) {
+        setFormError('Both start date and end date are required');
+        setCreating(false);
+        return;
+      }
+      
+      const start = startDate instanceof Date ? startDate : new Date(startDate);
+      const end = endDate instanceof Date ? endDate : new Date(endDate);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(0, 0, 0, 0);
+      
+      if (start < today) {
+        setFormError('Start date must be today or in the future');
+        setCreating(false);
+        return;
+      }
+      
+      if (end < start) {
+        setFormError('End date must be after start date');
+        setCreating(false);
+        return;
       }
 
       // Validate usage limit
@@ -103,7 +122,9 @@ const HostVouchers = () => {
 
       const voucherData = {
         discountPercentage: parseFloat(discountPercentage),
-        expirationDate: expirationDate || null,
+        startDate: startDate ? startDate.toISOString().split('T')[0] : null,
+        endDate: endDate ? endDate.toISOString().split('T')[0] : null,
+        expirationDate: endDate ? endDate.toISOString().split('T')[0] : null, // Keep for backward compatibility
         usageLimit: parseInt(usageLimit) || 1
       };
 
@@ -112,7 +133,8 @@ const HostVouchers = () => {
       if (result.success) {
         setSuccess(`Voucher ${result.code} created successfully!`);
         setDiscountPercentage(10);
-        setExpirationDate('');
+        setStartDate(null);
+        setEndDate(null);
         setUsageLimit(1);
         setShowCreateModal(false);
         fetchVouchers();
@@ -171,7 +193,7 @@ const HostVouchers = () => {
   };
 
   const formatDate = (date) => {
-    if (!date) return 'No expiration';
+    if (!date) return 'No date';
     const dateObj = date instanceof Date ? date : new Date(date);
     if (isNaN(dateObj.getTime())) return 'Invalid date';
     return dateObj.toLocaleDateString('en-US', { 
@@ -181,10 +203,59 @@ const HostVouchers = () => {
     });
   };
 
+  const formatDateRange = (voucher) => {
+    // Support both new date range format and old expiration date format
+    if (voucher.startDate && voucher.endDate) {
+      return `${formatDate(voucher.startDate)} - ${formatDate(voucher.endDate)}`;
+    } else if (voucher.expirationDate) {
+      // Fallback to old format
+      return `Until ${formatDate(voucher.expirationDate)}`;
+    }
+    return 'No expiration';
+  };
+
   const isExpired = (voucher) => {
-    if (!voucher.expirationDate) return false;
-    const expDate = voucher.expirationDate instanceof Date ? voucher.expirationDate : new Date(voucher.expirationDate);
-    return expDate < new Date();
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    
+    // Check new date range format first
+    if (voucher.startDate && voucher.endDate) {
+      const endDate = voucher.endDate instanceof Date ? voucher.endDate : new Date(voucher.endDate);
+      endDate.setHours(0, 0, 0, 0);
+      return endDate < now;
+    }
+    
+    // Fallback to old expiration date format
+    if (voucher.expirationDate) {
+      const expDate = voucher.expirationDate instanceof Date ? voucher.expirationDate : new Date(voucher.expirationDate);
+      expDate.setHours(0, 0, 0, 0);
+      return expDate < now;
+    }
+    
+    return false;
+  };
+
+  const isActive = (voucher) => {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    
+    // Check new date range format
+    if (voucher.startDate && voucher.endDate) {
+      const startDate = voucher.startDate instanceof Date ? voucher.startDate : new Date(voucher.startDate);
+      const endDate = voucher.endDate instanceof Date ? voucher.endDate : new Date(voucher.endDate);
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(0, 0, 0, 0);
+      return now >= startDate && now <= endDate;
+    }
+    
+    // Fallback: if only expiration date exists, consider it active if not expired
+    if (voucher.expirationDate) {
+      const expDate = voucher.expirationDate instanceof Date ? voucher.expirationDate : new Date(voucher.expirationDate);
+      expDate.setHours(0, 0, 0, 0);
+      return expDate >= now;
+    }
+    
+    return false;
   };
 
   const isUsed = (voucher) => {
@@ -194,6 +265,7 @@ const HostVouchers = () => {
   const getVoucherStatus = (voucher) => {
     if (isUsed(voucher)) return { label: 'Used', color: 'gray', icon: FaCheckCircle };
     if (isExpired(voucher)) return { label: 'Expired', color: 'red', icon: FaTimesCircle };
+    if (!isActive(voucher) && !isExpired(voucher)) return { label: 'Not Started', color: 'yellow', icon: FaInfoCircle };
     if (voucher.isClaimed) return { label: 'Claimed', color: 'blue', icon: FaInfoCircle };
     return { label: 'Available', color: 'green', icon: FaCheckCircle };
   };
@@ -297,7 +369,7 @@ const HostVouchers = () => {
                   <div className="space-y-2 mb-4">
                     <div className="flex items-center gap-2 text-sm text-gray-600">
                       <FaCalendarAlt className="w-4 h-4" />
-                      <span>Expires: {formatDate(voucher.expirationDate)}</span>
+                      <span>Valid: {formatDateRange(voucher)}</span>
                     </div>
                     <div className="flex items-center gap-2 text-sm text-gray-600">
                       <FaInfoCircle className="w-4 h-4" />
@@ -394,19 +466,112 @@ const HostVouchers = () => {
                     </div>
                   </div>
 
-                  {/* Expiration Date */}
+                  {/* Date Range with Calendar Picker */}
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Expiration Date (Optional)
+                      Voucher Availability Period <span className="text-red-500">*</span>
                     </label>
-                    <input
-                      type="date"
-                      value={expirationDate}
-                      onChange={(e) => setExpirationDate(e.target.value)}
-                      min={new Date().toISOString().split('T')[0]}
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                      disabled={creating}
-                    />
+                    <div className="space-y-3">
+                      {/* Combined Range Display */}
+                      <div className="relative">
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Select Date Range
+                        </label>
+                        <DatePicker
+                          selected={startDate}
+                          onChange={(dates) => {
+                            // When selectsRange is true, onChange receives:
+                            // - A single Date when selecting the first date
+                            // - An array [startDate, endDate] when both dates are selected
+                            if (Array.isArray(dates)) {
+                              const [start, end] = dates;
+                              setStartDate(start);
+                              setEndDate(end || null);
+                            } else if (dates) {
+                              // Single date selected (first click)
+                              setStartDate(dates);
+                              // If we already have an end date and the new start is after it, clear end date
+                              if (endDate && dates > endDate) {
+                                setEndDate(null);
+                              }
+                            } else {
+                              // Cleared
+                              setStartDate(null);
+                              setEndDate(null);
+                            }
+                          }}
+                          startDate={startDate}
+                          endDate={endDate}
+                          selectsRange
+                          minDate={new Date()}
+                          dateFormat="MMM dd, yyyy"
+                          placeholderText="Click to select date range"
+                          className="w-full px-4 py-3 pr-12 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 cursor-pointer"
+                          disabled={creating}
+                          calendarClassName="z-50"
+                          popperPlacement="bottom-start"
+                          showPopperArrow={false}
+                          popperModifiers={[
+                            {
+                              name: "offset",
+                              options: {
+                                offset: [0, 8],
+                              },
+                            },
+                          ]}
+                          wrapperClassName="w-full"
+                          isClearable
+                          shouldCloseOnSelect={false}
+                        />
+                        <div className="absolute right-3 top-9 -translate-y-1/2 pointer-events-none">
+                          <FaCalendarAlt className="w-5 h-5 text-gray-400" />
+                        </div>
+                      </div>
+
+                      {/* Display Selected Range */}
+                      {(startDate || endDate) && (
+                        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                          <div className="flex items-center gap-2 text-sm">
+                            <FaCalendarAlt className="text-emerald-600 flex-shrink-0" />
+                            <div className="flex-1">
+                              {startDate && endDate ? (
+                                <span className="text-emerald-800 font-medium">
+                                  {formatDate(startDate)} - {formatDate(endDate)}
+                                </span>
+                              ) : startDate ? (
+                                <span className="text-emerald-800 font-medium">
+                                  Start: {formatDate(startDate)} - <span className="text-emerald-600">Select end date</span>
+                                </span>
+                              ) : null}
+                            </div>
+                            {(startDate || endDate) && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setStartDate(null);
+                                  setEndDate(null);
+                                }}
+                                className="text-emerald-600 hover:text-emerald-800 transition-colors"
+                                disabled={creating}
+                              >
+                                <FaTimes className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Click the calendar to select a date range. First click selects the start date, second click selects the end date.
+                    </p>
+                    
+                    {/* Tip Section */}
+                    <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-2">
+                      <FaInfoCircle className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs text-blue-800">
+                        <strong>Tip:</strong> Creating vouchers is completely free! Use them to attract more guests and increase your bookings. The voucher will only be valid during the selected date range.
+                      </p>
+                    </div>
                   </div>
 
                   {/* Usage Limit */}
@@ -445,7 +610,7 @@ const HostVouchers = () => {
                     </button>
                     <button
                       type="submit"
-                      disabled={creating}
+                      disabled={creating || !startDate || !endDate}
                       className="flex-1 px-4 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                       {creating ? (

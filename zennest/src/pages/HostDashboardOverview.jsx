@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { getHostProfile, getHostBookings, getHostListings } from '../services/firestoreService';
+import { getHostProfile, getHostBookings, getHostListings, getGuestProfile, getListingById } from '../services/firestoreService';
 import useAuth from '../hooks/useAuth';
 import {
   FaHome,
@@ -17,10 +17,13 @@ import {
   FaArrowDown,
   FaPlus,
   FaShare,
-  FaChartLine
+  FaChartLine,
+  FaFilePdf,
+  FaPrint
 } from 'react-icons/fa';
 import { onSnapshot, collection, addDoc, query, where, orderBy, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { generatePDFReport, printReport } from './admin/lib/reportUtils';
 
 const HostDashboardOverview = () => {
   const { user } = useAuth();
@@ -37,6 +40,8 @@ const HostDashboardOverview = () => {
   });
   const [todayBookings, setTodayBookings] = useState([]);
   const [upcomingBookings, setUpcomingBookings] = useState([]);
+  const [allBookings, setAllBookings] = useState([]);
+  const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -97,7 +102,56 @@ const HostDashboardOverview = () => {
 
       // Method 2: Also check bookings for reviews (fallback)
       const bookingsResult = await getHostBookings(user.uid);
-      const bookings = bookingsResult.data || [];
+      let bookings = bookingsResult.data || [];
+      
+      // Fetch guest and listing information for each booking
+      const bookingsWithDetails = await Promise.all(
+        bookings.map(async (booking) => {
+          let guestName = booking.guestName || 'Guest';
+          let guestEmail = booking.guestEmail || '';
+          let listingTitle = booking.listingTitle || 'Unknown';
+
+          // Fetch guest information if not already present
+          if (booking.guestId && !booking.guestName) {
+            try {
+              const guestResult = await getGuestProfile(booking.guestId);
+              if (guestResult.success && guestResult.data) {
+                const guestData = guestResult.data;
+                guestName = 
+                  (guestData.firstName && guestData.lastName)
+                    ? `${guestData.firstName} ${guestData.lastName}`
+                    : guestData.displayName
+                    || guestData.name
+                    || (guestData.email ? guestData.email.split('@')[0] : 'Guest');
+                guestEmail = guestData.email || '';
+              }
+            } catch (error) {
+              console.error('Error fetching guest profile:', error);
+            }
+          }
+
+          // Fetch listing information if not already present
+          if (booking.listingId && !booking.listingTitle) {
+            try {
+              const listingResult = await getListingById(booking.listingId);
+              if (listingResult.success && listingResult.data) {
+                listingTitle = listingResult.data.title || 'Unknown';
+              }
+            } catch (error) {
+              console.error('Error fetching listing:', error);
+            }
+          }
+
+          return {
+            ...booking,
+            guestName,
+            guestEmail,
+            listingTitle
+          };
+        })
+      );
+
+      bookings = bookingsWithDetails;
       
       console.log('🔍 DEBUG: Total bookings:', bookings.length);
       bookings.forEach((booking, idx) => {
@@ -225,6 +279,7 @@ const HostDashboardOverview = () => {
 
       setTodayBookings(todayBookingsList);
       setUpcomingBookings(upcomingBookingsList);
+      setAllBookings(bookings); // Store all bookings for recent bookings section
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
@@ -252,6 +307,148 @@ const HostDashboardOverview = () => {
         break;
       default:
         break;
+    }
+  };
+
+  // Helper function to parse dates
+  const parseBookingDate = (date) => {
+    if (!date) return null;
+    if (date && typeof date.toDate === 'function') {
+      return date.toDate();
+    }
+    if (date instanceof Date) {
+      return date;
+    }
+    return new Date(date);
+  };
+
+  // Helper function to format dates
+  const formatDate = (date) => {
+    const dateObj = parseBookingDate(date);
+    if (!dateObj || isNaN(dateObj.getTime())) return 'N/A';
+    return dateObj.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric' 
+    });
+  };
+
+  // Filter bookings by status
+  const filteredRecentBookings = allBookings
+    .filter(booking => {
+      if (statusFilter === 'all') return true;
+      return booking.status === statusFilter;
+    })
+    .sort((a, b) => {
+      const dateA = parseBookingDate(a.createdAt || a.checkIn);
+      const dateB = parseBookingDate(b.createdAt || b.checkIn);
+      if (!dateA || !dateB) return 0;
+      return dateB.getTime() - dateA.getTime(); // Most recent first
+    })
+    .slice(0, 50); // Limit to 50 most recent
+
+  const handleExportPDF = () => {
+    try {
+      const columns = [
+        { key: 'bookingId', label: 'Booking ID', width: 1.2 },
+        { key: 'guestName', label: 'Guest', width: 2 },
+        { key: 'listingTitle', label: 'Listing', width: 2 },
+        { key: 'checkIn', label: 'Check-in', width: 1.3 },
+        { key: 'checkOut', label: 'Check-out', width: 1.3 },
+        { key: 'status', label: 'Status', width: 1.2 },
+        { key: 'total', label: 'Total', width: 1.2 }
+      ];
+
+      const rows = filteredRecentBookings.map(b => ({
+        bookingId: b.id?.substring(0, 8) || 'N/A',
+        guestName: `${b.guestName || 'Guest'}\n${b.guestEmail || ''}`,
+        listingTitle: b.listingTitle || 'Unknown',
+        checkIn: formatDate(b.checkIn),
+        checkOut: formatDate(b.checkOut),
+        status: b.status ? b.status.charAt(0).toUpperCase() + b.status.slice(1) : 'N/A',
+        total: `₱${(b.total || b.totalAmount || 0).toLocaleString()}`
+      }));
+
+      const filterLabel = statusFilter === 'all' ? 'All Bookings' : 
+                          statusFilter === 'completed' ? 'Completed Bookings' :
+                          statusFilter === 'cancelled' ? 'Cancelled Bookings' :
+                          statusFilter === 'confirmed' ? 'Confirmed Bookings' :
+                          `${statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)} Bookings`;
+
+      generatePDFReport({
+        type: 'host-recent-bookings',
+        title: filterLabel,
+        rows,
+        columns,
+        meta: {
+          generatedBy: 'Host Dashboard',
+          filter: filterLabel,
+          totalRecords: filteredRecentBookings.length
+        }
+      });
+
+      // Show success message (you might want to add a toast system)
+      alert('PDF report generated successfully');
+    } catch (error) {
+      console.error('Error exporting bookings PDF:', error);
+      alert('Failed to generate PDF report');
+    }
+  };
+
+  const handlePrint = () => {
+    try {
+      const filterLabel = statusFilter === 'all' ? 'All Bookings' : 
+                          statusFilter === 'completed' ? 'Completed Bookings' :
+                          statusFilter === 'cancelled' ? 'Cancelled Bookings' :
+                          statusFilter === 'confirmed' ? 'Confirmed Bookings' :
+                          `${statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)} Bookings`;
+
+      const htmlContent = `
+        <div style="margin-bottom: 20px;">
+          <h2 style="margin: 0; font-size: 24px; font-weight: bold;">${filterLabel}</h2>
+          <p style="margin: 5px 0; color: #666;">Total Records: ${filteredRecentBookings.length}</p>
+          <p style="margin: 5px 0; color: #666;">Generated: ${new Date().toLocaleString()}</p>
+        </div>
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="background-color: #f3f4f6;">
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Booking ID</th>
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Guest</th>
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Listing</th>
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Check-in</th>
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Check-out</th>
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Status</th>
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredRecentBookings.map(b => {
+              const guestEmail = b.guestEmail ? `<br><small style="color: #666;">${b.guestEmail}</small>` : '';
+              return `
+              <tr>
+                <td style="padding: 10px; border: 1px solid #ddd;">${b.id?.substring(0, 8) || 'N/A'}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">
+                  ${b.guestName || 'Guest'}${guestEmail}
+                </td>
+                <td style="padding: 10px; border: 1px solid #ddd;">${b.listingTitle || 'Unknown'}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">${formatDate(b.checkIn)}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">${formatDate(b.checkOut)}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">${b.status || 'N/A'}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">₱${(b.total || b.totalAmount || 0).toLocaleString()}</td>
+              </tr>
+            `;
+            }).join('')}
+          </tbody>
+        </table>
+      `;
+
+      printReport({
+        title: filterLabel,
+        htmlContent
+      });
+    } catch (error) {
+      console.error('Error printing bookings:', error);
+      alert('Failed to print report');
     }
   };
 
@@ -563,6 +760,132 @@ const HostDashboardOverview = () => {
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Recent Bookings Section */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="p-4 border-b border-gray-200">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+            <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <FaCalendarCheck className="text-emerald-600 text-base" />
+              Recent Bookings
+            </h2>
+            <div className="flex gap-2 flex-wrap">
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={handleExportPDF}
+                disabled={filteredRecentBookings.length === 0}
+                className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <FaFilePdf className="text-xs sm:text-sm" />
+                <span className="hidden sm:inline">Export PDF</span>
+                <span className="sm:hidden">PDF</span>
+              </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={handlePrint}
+                disabled={filteredRecentBookings.length === 0}
+                className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <FaPrint className="text-xs sm:text-sm" />
+                <span className="hidden sm:inline">Print</span>
+                <span className="sm:hidden">Print</span>
+              </motion.button>
+            </div>
+          </div>
+
+          {/* Status Filter */}
+          <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-end">
+            <div className="flex-1 min-w-full sm:min-w-[150px]">
+              <label className="block text-xs font-semibold text-gray-700 mb-1">Filter by Status</label>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600"
+              >
+                <option value="all">All Bookings</option>
+                <option value="completed">Completed</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="pending_approval">Pending Approval</option>
+                <option value="active">Active</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[800px]">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs font-semibold text-gray-600">Booking ID</th>
+                <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs font-semibold text-gray-600">Guest</th>
+                <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs font-semibold text-gray-600 hidden md:table-cell">Listing</th>
+                <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs font-semibold text-gray-600">Check-in</th>
+                <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs font-semibold text-gray-600 hidden lg:table-cell">Check-out</th>
+                <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs font-semibold text-gray-600">Status</th>
+                <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs font-semibold text-gray-600">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {filteredRecentBookings.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="px-3 sm:px-6 py-6 sm:py-8 text-center text-gray-500 text-xs sm:text-sm">
+                    No bookings found {statusFilter !== 'all' ? `with status "${statusFilter}"` : ''}
+                  </td>
+                </tr>
+              ) : (
+                filteredRecentBookings.map((booking, index) => (
+                  <motion.tr
+                    key={booking.id || index}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                    className="hover:bg-gray-50 transition-colors"
+                  >
+                    <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900">
+                      {booking.id?.substring(0, 8) || 'N/A'}
+                    </td>
+                    <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm">
+                      <div>
+                        <div className="font-medium text-gray-900">{booking.guestName || 'Guest'}</div>
+                        {booking.guestEmail && (
+                          <div className="text-[10px] text-gray-500">{booking.guestEmail}</div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 hidden md:table-cell">
+                      {booking.listingTitle || 'Unknown'}
+                    </td>
+                    <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm text-gray-600">
+                      {formatDate(booking.checkIn)}
+                    </td>
+                    <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 hidden lg:table-cell">
+                      {formatDate(booking.checkOut)}
+                    </td>
+                    <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm">
+                      <span className={`px-2 sm:px-3 py-1 rounded-full text-xs font-semibold ${
+                        booking.status === 'completed' ? 'bg-green-100 text-green-800' :
+                        booking.status === 'confirmed' ? 'bg-blue-100 text-blue-800' :
+                        booking.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+                        booking.status === 'active' ? 'bg-purple-100 text-purple-800' :
+                        booking.status === 'pending_approval' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {booking.status ? booking.status.charAt(0).toUpperCase() + booking.status.slice(1).replace('_', ' ') : 'N/A'}
+                      </span>
+                    </td>
+                    <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-emerald-700">
+                      ₱{(booking.total || booking.totalAmount || 0).toLocaleString()}
+                    </td>
+                  </motion.tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

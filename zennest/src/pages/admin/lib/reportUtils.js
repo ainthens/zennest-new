@@ -141,24 +141,75 @@ export async function generatePDFReport({ type, title, rows = [], columns = [], 
 
       // Draw header row with background
       let xPos = margin;
+      let headerMaxLines = 1;
+      const headerLines = [];
+      
+      // Calculate header text lines first
       columns.forEach((col, idx) => {
-        pdf.roundedRect(xPos, yPos - 7, colWidths[idx], headerHeight, 1, 1, 'FD'); // Filled
-        pdf.setTextColor(255, 255, 255);
         const label = col.label || col.key;
         const maxWidth = colWidths[idx] - 4;
         const textLines = pdf.splitTextToSize(label, maxWidth);
-        pdf.text(textLines[0] || '', xPos + 3, yPos - 1);
+        const limitedLines = textLines.slice(0, 2); // Allow up to 2 lines for headers
+        headerLines.push(limitedLines);
+        headerMaxLines = Math.max(headerMaxLines, limitedLines.length);
+      });
+      
+      // Adjust header height if needed
+      const actualHeaderHeight = Math.max(headerHeight, 8 + (headerMaxLines - 1) * 3.5);
+      
+      // Draw header cells
+      columns.forEach((col, idx) => {
+        pdf.roundedRect(xPos, yPos - 7, colWidths[idx], actualHeaderHeight, 1, 1, 'FD'); // Filled
+        pdf.setTextColor(255, 255, 255);
+        const lines = headerLines[idx] || [];
+        lines.forEach((textLine, lineIdx) => {
+          pdf.text(textLine || '', xPos + 3, yPos - 1 + (lineIdx * 3.5));
+        });
         xPos += colWidths[idx];
       });
-      yPos += 5;
+      yPos += actualHeaderHeight - 2;
 
       // Draw data rows with alternating colors
       pdf.setFont(undefined, 'normal');
-      pdf.setFontSize(8);
+      pdf.setFontSize(7); // Slightly smaller font to fit more text
       
       rows.forEach((row, rowIdx) => {
-        // Check if we need a new page
-        if (yPos > pageHeight - 30) {
+        // Calculate maximum lines needed for this row
+        let maxLines = 1;
+        const cellLines = [];
+        
+        columns.forEach((col, colIdx) => {
+          const value = row[col.key] ?? '';
+          const displayValue = typeof value === 'object' && value !== null
+            ? JSON.stringify(value)
+            : String(value);
+          
+          const maxWidth = colWidths[colIdx] - 6;
+          
+          // Handle newlines in the text (e.g., guest name with email on new line)
+          let textLines = [];
+          if (displayValue.includes('\n')) {
+            // Split by newlines first, then wrap each line
+            const newlineParts = displayValue.split('\n');
+            newlineParts.forEach(part => {
+              const wrapped = pdf.splitTextToSize(part.trim(), maxWidth);
+              textLines.push(...wrapped);
+            });
+          } else {
+            textLines = pdf.splitTextToSize(displayValue, maxWidth);
+          }
+          
+          // Allow up to 3 lines per cell for better text display
+          const limitedLines = textLines.slice(0, 3);
+          cellLines.push(limitedLines);
+          maxLines = Math.max(maxLines, limitedLines.length);
+        });
+        
+        // Calculate row height based on content (minimum 8, plus 3.5 per additional line)
+        const rowHeight = Math.max(8, 8 + (maxLines - 1) * 3.5);
+        
+        // Check if we need a new page (with buffer for row height)
+        if (yPos + rowHeight > pageHeight - 30) {
           pdf.addPage();
           // Re-add header on new page
           yPos = margin + 20;
@@ -168,53 +219,58 @@ export async function generatePDFReport({ type, title, rows = [], columns = [], 
           pdf.setTextColor(255, 255, 255);
           pdf.setFont(undefined, 'bold');
           pdf.setFontSize(9);
+          
+          // Re-draw header with same logic
           columns.forEach((col, idx) => {
-            pdf.roundedRect(xPos, yPos - 7, colWidths[idx], headerHeight, 1, 1, 'FD');
-            const label = col.label || col.key;
-            const maxWidth = colWidths[idx] - 4;
-            const textLines = pdf.splitTextToSize(label, maxWidth);
-            pdf.text(textLines[0] || '', xPos + 3, yPos - 1);
+            pdf.roundedRect(xPos, yPos - 7, colWidths[idx], actualHeaderHeight, 1, 1, 'FD');
+            const lines = headerLines[idx] || [];
+            lines.forEach((textLine, lineIdx) => {
+              pdf.text(textLine || '', xPos + 3, yPos - 1 + (lineIdx * 3.5));
+            });
             xPos += colWidths[idx];
           });
-          yPos += 5;
+          yPos += actualHeaderHeight - 2;
           pdf.setFont(undefined, 'normal');
-          pdf.setFontSize(8);
+          pdf.setFontSize(7);
         }
 
-        // Alternate row background
+        // Alternate row background - draw full row height
         if (rowIdx % 2 === 0) {
           pdf.setFillColor(249, 250, 251); // gray-50
           xPos = margin;
           columns.forEach((col, colIdx) => {
-            pdf.roundedRect(xPos, yPos - 6, colWidths[colIdx], 8, 1, 1, 'FD');
+            pdf.roundedRect(xPos, yPos - 6, colWidths[colIdx], rowHeight, 1, 1, 'FD');
             xPos += colWidths[colIdx];
           });
         }
 
+        // Draw cell borders
+        pdf.setDrawColor(229, 231, 235); // gray-200
+        pdf.setLineWidth(0.3);
+        xPos = margin;
+        columns.forEach((col, colIdx) => {
+          if (colIdx > 0) {
+            pdf.line(xPos, yPos - 6, xPos, yPos - 6 + rowHeight);
+          }
+          xPos += colWidths[colIdx];
+        });
+
+        // Draw text in each cell
         xPos = margin;
         pdf.setTextColor(17, 24, 39); // gray-900
         columns.forEach((col, colIdx) => {
-          const value = row[col.key] ?? '';
-          const displayValue = typeof value === 'object' && value !== null
-            ? JSON.stringify(value)
-            : String(value);
+          const lines = cellLines[colIdx] || [];
           
-          // Truncate long text
-          const maxWidth = colWidths[colIdx] - 6;
-          const textLines = pdf.splitTextToSize(displayValue, maxWidth);
-          
-          // Handle multi-line text
-          textLines.forEach((textLine, lineIdx) => {
-            if (lineIdx === 0) {
-              pdf.text(textLine || '', xPos + 3, yPos - 1);
-            } else if (lineIdx < 2) { // Limit to 2 lines per cell
-              pdf.text(textLine || '', xPos + 3, yPos - 1 + (lineIdx * 4));
-            }
+          // Draw each line of text in the cell
+          lines.forEach((textLine, lineIdx) => {
+            const lineY = yPos - 1 + (lineIdx * 3.5);
+            pdf.text(textLine || '', xPos + 3, lineY);
           });
           
           xPos += colWidths[colIdx];
         });
-        yPos += 9; // Increased spacing for better readability
+        
+        yPos += rowHeight + 1; // Add spacing between rows
       });
     } else {
       pdf.setFontSize(12);

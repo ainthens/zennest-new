@@ -284,9 +284,42 @@ const GuestVouchers = () => {
 
                         {/* Voucher Details */}
                         <div className="space-y-2 mb-4">
-                          <div className="flex items-center gap-2 text-sm text-gray-600">
-                            <FaCalendarAlt className="w-4 h-4" />
-                            <span>Expires: {formatDate(voucher.expirationDate)}</span>
+                          <div className={`p-3 rounded-lg border-2 ${
+                            isExpired(voucher) 
+                              ? 'bg-red-50 border-red-200' 
+                              : 'bg-emerald-50 border-emerald-200'
+                          }`}>
+                            <div className="flex items-center gap-2 mb-1">
+                              <FaCalendarAlt className={`w-4 h-4 ${
+                                isExpired(voucher) ? 'text-red-600' : 'text-emerald-600'
+                              }`} />
+                              <span className={`text-xs font-semibold ${
+                                isExpired(voucher) ? 'text-red-700' : 'text-emerald-700'
+                              }`}>
+                                {isExpired(voucher) ? 'EXPIRED' : 'EXPIRES'}
+                              </span>
+                            </div>
+                            <div className={`text-sm font-bold ${
+                              isExpired(voucher) ? 'text-red-900' : 'text-emerald-900'
+                            }`}>
+                              {formatDate(voucher.expirationDate)}
+                            </div>
+                            {!isExpired(voucher) && voucher.expirationDate && (
+                              <div className="text-xs text-emerald-600 mt-1">
+                                {(() => {
+                                  const expDate = voucher.expirationDate instanceof Date 
+                                    ? voucher.expirationDate 
+                                    : new Date(voucher.expirationDate);
+                                  const today = new Date();
+                                  const diffTime = expDate - today;
+                                  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                  if (diffDays <= 7) {
+                                    return `⚠️ Expires in ${diffDays} day${diffDays !== 1 ? 's' : ''}`;
+                                  }
+                                  return null;
+                                })()}
+                              </div>
+                            )}
                           </div>
                           <div className="flex items-center gap-2">
                             <StatusIcon className={`w-4 h-4 text-${status.color}-600`} />
@@ -382,9 +415,56 @@ const GuestVouchers = () => {
 
                         {/* Voucher Details */}
                         <div className="space-y-2 mb-4">
-                          <div className="flex items-center gap-2 text-sm text-gray-600">
-                            <FaCalendarAlt className="w-4 h-4" />
-                            <span>Expires: {formatDate(voucher.expirationDate)}</span>
+                          <div className={`p-3 rounded-lg border-2 ${
+                            isExpired(voucher) 
+                              ? 'bg-red-50 border-red-200' 
+                              : isUsed(voucher)
+                              ? 'bg-gray-50 border-gray-200'
+                              : 'bg-emerald-50 border-emerald-200'
+                          }`}>
+                            <div className="flex items-center gap-2 mb-1">
+                              <FaCalendarAlt className={`w-4 h-4 ${
+                                isExpired(voucher) 
+                                  ? 'text-red-600' 
+                                  : isUsed(voucher)
+                                  ? 'text-gray-600'
+                                  : 'text-emerald-600'
+                              }`} />
+                              <span className={`text-xs font-semibold ${
+                                isExpired(voucher) 
+                                  ? 'text-red-700' 
+                                  : isUsed(voucher)
+                                  ? 'text-gray-700'
+                                  : 'text-emerald-700'
+                              }`}>
+                                {isExpired(voucher) ? 'EXPIRED' : 'EXPIRES'}
+                              </span>
+                            </div>
+                            <div className={`text-sm font-bold ${
+                              isExpired(voucher) 
+                                ? 'text-red-900' 
+                                : isUsed(voucher)
+                                ? 'text-gray-900'
+                                : 'text-emerald-900'
+                            }`}>
+                              {formatDate(voucher.expirationDate)}
+                            </div>
+                            {!isExpired(voucher) && !isUsed(voucher) && voucher.expirationDate && (
+                              <div className="text-xs text-emerald-600 mt-1">
+                                {(() => {
+                                  const expDate = voucher.expirationDate instanceof Date 
+                                    ? voucher.expirationDate 
+                                    : new Date(voucher.expirationDate);
+                                  const today = new Date();
+                                  const diffTime = expDate - today;
+                                  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                  if (diffDays <= 7) {
+                                    return `⚠️ Expires in ${diffDays} day${diffDays !== 1 ? 's' : ''}`;
+                                  }
+                                  return null;
+                                })()}
+                              </div>
+                            )}
                           </div>
                           <div className="flex items-center gap-2">
                             <StatusIcon className={`w-4 h-4 text-${status.color}-600`} />

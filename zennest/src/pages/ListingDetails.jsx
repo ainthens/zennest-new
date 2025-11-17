@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { getHostProfile, getUserFavorites, toggleFavorite, getOrCreateConversation, updateHostPoints } from '../services/firestoreService';
+import { fetchHouseRules } from './admin/lib/dataFetchers';
 import useAuth from '../hooks/useAuth';
 import SettingsHeader from '../components/SettingsHeader';
 import Loading from '../components/Loading';
@@ -47,7 +48,8 @@ import {
   FaInstagram,
   FaCalendarAlt,
   FaCalendarCheck,
-  FaCheck
+  FaCheck,
+  FaHome
 } from 'react-icons/fa';
 
 // Fix Leaflet default icon issue
@@ -78,6 +80,9 @@ const ListingDetails = () => {
   const [bounceKey, setBounceKey] = useState(0);
   const [showShareModal, setShowShareModal] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [showHouseRulesModal, setShowHouseRulesModal] = useState(false);
+  const [houseRulesContent, setHouseRulesContent] = useState('');
+  const [loadingHouseRules, setLoadingHouseRules] = useState(false);
 
   // New state for calendar
   const [showCalendar, setShowCalendar] = useState(false);
@@ -471,6 +476,22 @@ const ListingDetails = () => {
       setTimeout(() => {
         setLinkCopied(false);
       }, 2000);
+    }
+  };
+
+  const handleViewHouseRules = async () => {
+    setShowHouseRulesModal(true);
+    if (!houseRulesContent) {
+      setLoadingHouseRules(true);
+      try {
+        const content = await fetchHouseRules();
+        setHouseRulesContent(content || '<p>No house rules available at this time.</p>');
+      } catch (error) {
+        console.error('Error fetching house rules:', error);
+        setHouseRulesContent('<p style="color: red;">Failed to load house rules. Please try again later.</p>');
+      } finally {
+        setLoadingHouseRules(false);
+      }
     }
   };
 
@@ -2284,7 +2305,16 @@ const ListingDetails = () => {
                 <h2 className="text-xl font-bold text-gray-900 mb-4">Things to know</h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div>
-                    <h3 className="font-bold text-gray-900 mb-3 text-base">House rules</h3>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-bold text-gray-900 text-base">House rules</h3>
+                      <button
+                        onClick={handleViewHouseRules}
+                        className="text-emerald-600 hover:text-emerald-700 font-semibold text-sm underline flex items-center gap-1"
+                      >
+                        <FaHome className="w-3 h-3" />
+                        View all
+                      </button>
+                    </div>
                     <ul className="space-y-2 text-gray-700">
                       <li className="flex items-start gap-2">
                         <FaCheckCircle className="text-emerald-600 mt-1 flex-shrink-0" />
@@ -2839,6 +2869,71 @@ const ListingDetails = () => {
                     </>
                   )}
                 </button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* House Rules Modal */}
+        <AnimatePresence>
+          {showHouseRulesModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+              onClick={() => setShowHouseRulesModal(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-emerald-50 to-teal-50">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-emerald-600 flex items-center justify-center">
+                      <FaHome className="text-white text-lg" />
+                    </div>
+                    <h3 className="text-xl font-bold text-gray-900">House Rules</h3>
+                  </div>
+                  <button
+                    onClick={() => setShowHouseRulesModal(false)}
+                    className="text-gray-400 hover:text-gray-600 transition-colors p-2 hover:bg-white rounded-full"
+                  >
+                    <FaTimes className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 overflow-y-auto p-6">
+                  {loadingHouseRules ? (
+                    <div className="flex items-center justify-center py-12">
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600 mx-auto mb-3"></div>
+                        <p className="text-gray-600">Loading house rules...</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div 
+                      className="prose max-w-none prose-headings:text-gray-900 prose-p:text-gray-700 prose-ul:text-gray-700 prose-li:text-gray-700"
+                      dangerouslySetInnerHTML={{ __html: houseRulesContent || '<p>No house rules available at this time.</p>' }}
+                    />
+                  )}
+                </div>
+
+                {/* Footer */}
+                <div className="p-6 border-t border-gray-200 bg-gray-50">
+                  <button
+                    onClick={() => setShowHouseRulesModal(false)}
+                    className="w-full px-6 py-3 bg-emerald-600 text-white rounded-xl font-semibold hover:bg-emerald-700 transition-colors"
+                  >
+                    Close
+                  </button>
+                </div>
               </motion.div>
             </motion.div>
           )}

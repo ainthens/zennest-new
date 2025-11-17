@@ -130,10 +130,6 @@ const HomeStays = () => {
   const [suggestedListings, setSuggestedListings] = useState([]);
   const [listingsNearYou, setListingsNearYou] = useState([]);
   
-  // Slider state for "Bookings Near Your Place"
-  const [nearYouSlideIndex, setNearYouSlideIndex] = useState(0);
-  const nearYouScrollRef = useRef(null);
-  
   // Search state - controls visibility of Suggested and Near You sections
   const [isSearching, setIsSearching] = useState(false);
 
@@ -366,8 +362,9 @@ const HomeStays = () => {
               return matches;
             });
             
-            setListingsNearYou(near);
-            console.log(`✅ Found ${near.length} listings near you in ${userProvince}`);
+            // Limit to 3 listings maximum
+            setListingsNearYou(near.slice(0, 3));
+            console.log(`✅ Found ${near.length} listings near you in ${userProvince} (showing up to 3)`);
             
             if (near.length === 0 && normalizedListings.filter(l => l.province).length > 0) {
               console.warn(`⚠️ No matches found! User province: "${normalizedUserProvince}", Available provinces:`, allProvinces);
@@ -401,9 +398,15 @@ const HomeStays = () => {
         console.error('❌ Error fetching listings:', error);
         console.error('Error details:', {
           code: error.code,
-          message: error.message
+          message: error.message,
+          stack: error.stack
         });
+        // Set empty listings but don't crash the app
         setListings([]);
+        setSuggestedListings([]);
+        setListingsNearYou([]);
+        // Optionally show a user-friendly error message
+        // You can add a toast notification here if needed
       } finally {
         setLoading(false);
       }
@@ -947,90 +950,8 @@ const HomeStays = () => {
               <div className="bg-gray-50 rounded-xl p-8 text-center border border-gray-200">
                 <p className="text-gray-600">No nearby home stays found based on your location.</p>
               </div>
-            ) : listingsNearYou.length > 3 ? (
-              // Horizontal slider for more than 3 listings
-              <div className="relative">
-                {/* Previous button */}
-                {nearYouSlideIndex > 0 && (
-                  <button
-                    onClick={() => {
-                      const newIndex = nearYouSlideIndex - 1;
-                      setNearYouSlideIndex(newIndex);
-                      if (nearYouScrollRef.current) {
-                        nearYouScrollRef.current.scrollTo({
-                          left: newIndex * nearYouScrollRef.current.clientWidth,
-                          behavior: "smooth",
-                        });
-                      }
-                    }}
-                    className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white rounded-full shadow-lg p-3 hover:bg-gray-50 transition-colors border border-gray-200"
-                    aria-label="Previous"
-                  >
-                    <FaChevronLeft className="w-5 h-5 text-gray-700" />
-                  </button>
-                )}
-
-                {/* Scrollable container */}
-                <div
-                  ref={nearYouScrollRef}
-                  className="flex overflow-x-auto scroll-smooth snap-x snap-mandatory gap-6 pb-4 no-scrollbar"
-                  style={{
-                    scrollbarWidth: 'none',
-                    msOverflowStyle: 'none'
-                  }}
-                  onScroll={(e) => {
-                    const scrollLeft = e.target.scrollLeft;
-                    const clientWidth = e.target.clientWidth;
-                    const maxIndex = Math.ceil(listingsNearYou.length / 3) - 1;
-                    const currentIndex = Math.round(scrollLeft / clientWidth);
-                    if (currentIndex !== nearYouSlideIndex && currentIndex <= maxIndex) {
-                      setNearYouSlideIndex(currentIndex);
-                    }
-                  }}
-                >
-                  {listingsNearYou.map((stay, index) => (
-                    <div
-                      key={stay.id}
-                      className="min-w-[calc(33.333%-1rem)] sm:min-w-[calc(33.333%-1rem)] flex-shrink-0 snap-start"
-                    >
-                      <AnimatedCard delay={index * 0.05}>
-                        <HomeStayCard
-                          stay={stay}
-                          onView={handleViewDetails}
-                          isFavorite={favorites.has(stay.id)}
-                          onToggleFavorite={() => handleToggleFavorite(stay.id)}
-                        />
-                      </AnimatedCard>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Next button */}
-                {listingsNearYou.length > 3 && 
-                 nearYouSlideIndex < Math.ceil(listingsNearYou.length / 3) - 1 && (
-                  <button
-                    onClick={() => {
-                      const maxIndex = Math.ceil(listingsNearYou.length / 3) - 1;
-                      if (nearYouSlideIndex < maxIndex) {
-                        const newIndex = nearYouSlideIndex + 1;
-                        setNearYouSlideIndex(newIndex);
-                        if (nearYouScrollRef.current) {
-                          nearYouScrollRef.current.scrollTo({
-                            left: newIndex * nearYouScrollRef.current.clientWidth,
-                            behavior: "smooth",
-                          });
-                        }
-                      }
-                    }}
-                    className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white rounded-full shadow-lg p-3 hover:bg-gray-50 transition-colors border border-gray-200"
-                    aria-label="Next"
-                  >
-                    <FaChevronRight className="w-5 h-5 text-gray-700" />
-                  </button>
-                )}
-              </div>
             ) : (
-              // Grid layout for 3 or fewer listings
+              // Grid layout - always shows up to 3 listings
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
                 {listingsNearYou.map((stay, index) => (
                   <AnimatedCard key={stay.id} delay={index * 0.1}>

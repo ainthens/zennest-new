@@ -2,33 +2,61 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import SectionHeader from '../components/SectionHeader';
-import { FaFileContract, FaEdit, FaSave, FaSpinner, FaInfoCircle, FaPrint, FaFilePdf } from 'react-icons/fa';
-import { fetchTermsAndConditions, saveTermsAndConditions } from '../lib/dataFetchers';
+import { FaFileContract, FaEdit, FaSave, FaSpinner, FaInfoCircle, FaPrint, FaFilePdf, FaHome } from 'react-icons/fa';
+import { fetchTermsAndConditions, saveTermsAndConditions, fetchHouseRules, saveHouseRules } from '../lib/dataFetchers';
 import { printReport } from '../lib/reportUtils';
 import useAuth from '../../../hooks/useAuth';
 import jsPDF from 'jspdf';
 
 const TermsEditor = ({ showToast }) => {
   const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState('terms'); // 'terms' or 'houseRules'
   const [termsContent, setTermsContent] = useState('');
+  const [houseRulesContent, setHouseRulesContent] = useState('');
   const [editingTerms, setEditingTerms] = useState(false);
+  const [editingHouseRules, setEditingHouseRules] = useState(false);
   const [savingTerms, setSavingTerms] = useState(false);
+  const [savingHouseRules, setSavingHouseRules] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadTerms();
+    loadData();
   }, []);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const [terms, houseRules] = await Promise.all([
+        fetchTermsAndConditions(),
+        fetchHouseRules()
+      ]);
+      setTermsContent(terms);
+      setHouseRulesContent(houseRules);
+    } catch (error) {
+      console.error('Error loading data:', error);
+      showToast('Failed to load content', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const loadTerms = async () => {
     try {
-      setLoading(true);
       const content = await fetchTermsAndConditions();
       setTermsContent(content);
     } catch (error) {
       console.error('Error loading terms:', error);
       showToast('Failed to load terms', 'error');
-    } finally {
-      setLoading(false);
+    }
+  };
+
+  const loadHouseRules = async () => {
+    try {
+      const content = await fetchHouseRules();
+      setHouseRulesContent(content);
+    } catch (error) {
+      console.error('Error loading house rules:', error);
+      showToast('Failed to load house rules', 'error');
     }
   };
 
@@ -48,6 +76,25 @@ const TermsEditor = ({ showToast }) => {
       showToast('Failed to save terms', 'error');
     } finally {
       setSavingTerms(false);
+    }
+  };
+
+  const handleSaveHouseRules = async () => {
+    if (!houseRulesContent.trim()) {
+      showToast('House rules content cannot be empty', 'error');
+      return;
+    }
+
+    setSavingHouseRules(true);
+    try {
+      await saveHouseRules(houseRulesContent, user?.uid || 'admin');
+      showToast('House Rules updated successfully');
+      setEditingHouseRules(false);
+    } catch (error) {
+      console.error('Error saving house rules:', error);
+      showToast('Failed to save house rules', 'error');
+    } finally {
+      setSavingHouseRules(false);
     }
   };
 
@@ -76,9 +123,35 @@ const TermsEditor = ({ showToast }) => {
     }
   };
 
-  const handleExportPDF = async () => {
-    if (!termsContent.trim()) {
-      showToast('No terms content to export', 'error');
+  const handlePrintHouseRules = () => {
+    if (!houseRulesContent.trim()) {
+      showToast('No house rules content to print', 'error');
+      return;
+    }
+
+    try {
+      const htmlContent = `
+        <div style="max-width: 800px; margin: 0 auto; padding: 20px;">
+          ${houseRulesContent}
+        </div>
+      `;
+
+      printReport({
+        title: 'House Rules',
+        htmlContent
+      });
+
+      showToast('Print dialog opened');
+    } catch (error) {
+      console.error('Error printing house rules:', error);
+      showToast('Failed to print house rules', 'error');
+    }
+  };
+
+  // Helper function to export PDF (reusable for both terms and house rules)
+  const exportPDF = async (content, title) => {
+    if (!content.trim()) {
+      showToast(`No ${title.toLowerCase()} content to export`, 'error');
       return;
     }
 
@@ -124,7 +197,7 @@ const TermsEditor = ({ showToast }) => {
       pdf.setFontSize(18);
       pdf.setTextColor(17, 24, 39); // gray-900
       pdf.setFont(undefined, 'bold');
-      const titleText = 'Terms & Conditions';
+      const titleText = title;
       const titleWidth = pdf.getTextWidth(titleText);
       pdf.text(titleText, pageWidth - margin - 10 - titleWidth, yPos + 22);
       
@@ -149,7 +222,7 @@ const TermsEditor = ({ showToast }) => {
 
       // Parse HTML and convert to formatted PDF text
       const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = termsContent;
+      tempDiv.innerHTML = content;
       
       // Function to process HTML elements recursively
       const processElement = (element) => {
@@ -334,7 +407,8 @@ const TermsEditor = ({ showToast }) => {
       }
 
       // Generate filename
-      const filename = `zennest-terms-and-conditions-${Date.now()}.pdf`;
+      const slug = title.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+      const filename = `zennest-${slug}-${Date.now()}.pdf`;
       pdf.save(filename);
       
       showToast('PDF exported successfully');
@@ -343,6 +417,13 @@ const TermsEditor = ({ showToast }) => {
       showToast('Failed to export PDF', 'error');
     }
   };
+
+  const handleExportPDF = () => exportPDF(termsContent, 'Terms & Conditions');
+  const handleExportPDFHouseRules = () => exportPDF(houseRulesContent, 'House Rules');
+
+  const isEditing = activeTab === 'terms' ? editingTerms : editingHouseRules;
+  const currentContent = activeTab === 'terms' ? termsContent : houseRulesContent;
+  const isSaving = activeTab === 'terms' ? savingTerms : savingHouseRules;
 
   return (
     <motion.div
@@ -353,143 +434,204 @@ const TermsEditor = ({ showToast }) => {
       className="space-y-6"
     >
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Terms & Conditions</h1>
-        <p className="text-sm sm:text-base text-gray-600 mt-1">Create and manage HTML-formatted terms that appear on host registration.</p>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Terms & Conditions / House Rules</h1>
+        <p className="text-sm sm:text-base text-gray-600 mt-1">Create and manage HTML-formatted terms and house rules.</p>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6 border border-gray-100">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 sm:mb-6">
-          <SectionHeader icon={FaFileContract} title="Terms & Conditions Editor" />
-          {!editingTerms ? (
-            <div className="flex flex-col sm:flex-row gap-2">
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handlePrintTerms}
-                disabled={!termsContent.trim()}
-                className="px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                <FaPrint className="text-sm" />
-                <span className="hidden sm:inline">Print</span>
-                <span className="sm:hidden">Print</span>
-              </motion.button>
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handleExportPDF}
-                disabled={!termsContent.trim()}
-                className="px-3 sm:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                <FaFilePdf className="text-sm" />
-                <span className="hidden sm:inline">Export PDF</span>
-                <span className="sm:hidden">PDF</span>
-              </motion.button>
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setEditingTerms(true)}
-                className="px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-sm flex items-center justify-center gap-2"
-              >
-                <FaEdit className="text-sm" />
-                <span className="hidden sm:inline">Edit Terms</span>
-                <span className="sm:hidden">Edit</span>
-              </motion.button>
-            </div>
-          ) : (
-            <div className="flex flex-col sm:flex-row gap-2">
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handleSaveTerms}
-                disabled={savingTerms}
-                className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {savingTerms ? (
-                  <>
-                    <FaSpinner className="animate-spin text-sm" />
-                    <span className="hidden sm:inline">Saving...</span>
-                    <span className="sm:hidden">Saving</span>
-                  </>
-                ) : (
-                  <>
-                    <FaSave className="text-sm" />
-                    <span className="hidden sm:inline">Save Changes</span>
-                    <span className="sm:hidden">Save</span>
-                  </>
-                )}
-              </motion.button>
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => {
-                  setEditingTerms(false);
-                  loadTerms();
-                }}
-                className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-semibold text-sm"
-              >
-                Cancel
-              </motion.button>
-            </div>
-          )}
+      {/* Tabs */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="flex border-b border-gray-200">
+          <button
+            onClick={() => {
+              setActiveTab('terms');
+              setEditingTerms(false);
+              setEditingHouseRules(false);
+            }}
+            className={`flex-1 px-4 sm:px-6 py-3 sm:py-4 font-semibold text-sm sm:text-base transition-colors flex items-center justify-center gap-2 ${
+              activeTab === 'terms'
+                ? 'bg-emerald-50 text-emerald-700 border-b-2 border-emerald-600'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+            }`}
+          >
+            <FaFileContract className="text-base sm:text-lg" />
+            <span>Terms & Conditions</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('houseRules');
+              setEditingTerms(false);
+              setEditingHouseRules(false);
+            }}
+            className={`flex-1 px-4 sm:px-6 py-3 sm:py-4 font-semibold text-sm sm:text-base transition-colors flex items-center justify-center gap-2 ${
+              activeTab === 'houseRules'
+                ? 'bg-emerald-50 text-emerald-700 border-b-2 border-emerald-600'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+            }`}
+          >
+            <FaHome className="text-base sm:text-lg" />
+            <span>House Rules</span>
+          </button>
         </div>
 
-        {/* Info Banner */}
-        <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-4">
-          <div className="flex gap-3">
-            <FaInfoCircle className="text-blue-600 text-lg flex-shrink-0 mt-0.5" />
-            <div className="text-sm text-blue-800">
-              <p className="font-semibold mb-1">HTML Editing Enabled</p>
-              <p>You can use HTML tags like <code className="bg-blue-100 px-1 rounded">&lt;h1&gt;</code>, <code className="bg-blue-100 px-1 rounded">&lt;p&gt;</code>, <code className="bg-blue-100 px-1 rounded">&lt;ul&gt;</code>, <code className="bg-blue-100 px-1 rounded">&lt;strong&gt;</code>, etc.</p>
-              <p className="mt-1">The formatted version will be displayed to hosts during registration.</p>
-            </div>
+        <div className="p-4 sm:p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 sm:mb-6">
+            <SectionHeader 
+              icon={activeTab === 'terms' ? FaFileContract : FaHome} 
+              title={activeTab === 'terms' ? 'Terms & Conditions Editor' : 'House Rules Editor'} 
+            />
+            {!isEditing ? (
+              <div className="flex flex-col sm:flex-row gap-2">
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={activeTab === 'terms' ? handlePrintTerms : handlePrintHouseRules}
+                  disabled={!currentContent.trim()}
+                  className="px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <FaPrint className="text-sm" />
+                  <span className="hidden sm:inline">Print</span>
+                  <span className="sm:hidden">Print</span>
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={activeTab === 'terms' ? handleExportPDF : handleExportPDFHouseRules}
+                  disabled={!currentContent.trim()}
+                  className="px-3 sm:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <FaFilePdf className="text-sm" />
+                  <span className="hidden sm:inline">Export PDF</span>
+                  <span className="sm:hidden">PDF</span>
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => {
+                    if (activeTab === 'terms') {
+                      setEditingTerms(true);
+                    } else {
+                      setEditingHouseRules(true);
+                    }
+                  }}
+                  className="px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-sm flex items-center justify-center gap-2"
+                >
+                  <FaEdit className="text-sm" />
+                  <span className="hidden sm:inline">Edit {activeTab === 'terms' ? 'Terms' : 'House Rules'}</span>
+                  <span className="sm:hidden">Edit</span>
+                </motion.button>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row gap-2">
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={activeTab === 'terms' ? handleSaveTerms : handleSaveHouseRules}
+                  disabled={isSaving}
+                  className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isSaving ? (
+                    <>
+                      <FaSpinner className="animate-spin text-sm" />
+                      <span className="hidden sm:inline">Saving...</span>
+                      <span className="sm:hidden">Saving</span>
+                    </>
+                  ) : (
+                    <>
+                      <FaSave className="text-sm" />
+                      <span className="hidden sm:inline">Save Changes</span>
+                      <span className="sm:hidden">Save</span>
+                    </>
+                  )}
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => {
+                    if (activeTab === 'terms') {
+                      setEditingTerms(false);
+                      loadTerms();
+                    } else {
+                      setEditingHouseRules(false);
+                      loadHouseRules();
+                    }
+                  }}
+                  className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-semibold text-sm"
+                >
+                  Cancel
+                </motion.button>
+              </div>
+            )}
           </div>
-        </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600 mx-auto mb-3"></div>
-              <p className="text-gray-600">Loading terms...</p>
-            </div>
-          </div>
-        ) : editingTerms ? (
-          /* HTML Editor Mode */
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                HTML Content (Edit Mode)
-              </label>
-              <textarea
-                value={termsContent}
-                onChange={(e) => setTermsContent(e.target.value)}
-                className="w-full p-3 sm:p-4 border-2 border-emerald-600 rounded-lg outline-none focus:ring-2 focus:ring-emerald-200 font-mono text-xs sm:text-sm min-h-[300px] sm:min-h-[500px]"
-                placeholder="<h1>Zennest Terms and Conditions</h1>&#10;<p>Welcome to Zennest...</p>&#10;<ul>&#10;  <li>Point 1</li>&#10;  <li>Point 2</li>&#10;</ul>"
-              />
-              <p className="text-xs text-gray-500 mt-2">
-                💡 Raw HTML is saved exactly as typed. No sanitization applied.
-              </p>
-            </div>
-          </div>
-        ) : (
-          /* Preview Mode */
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Formatted Preview (How hosts will see it)
-              </label>
-              <div className="border-2 border-gray-200 rounded-lg p-3 sm:p-6 bg-gray-50 min-h-[300px] sm:min-h-[500px] overflow-auto">
-                {termsContent ? (
-                  <div 
-                    className="prose max-w-none"
-                    dangerouslySetInnerHTML={{ __html: termsContent }}
-                  />
-                ) : (
-                  <p className="text-gray-400 italic">No terms content available. Click "Edit Terms" to add content.</p>
-                )}
+          {/* Info Banner */}
+          <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-4">
+            <div className="flex gap-3">
+              <FaInfoCircle className="text-blue-600 text-lg flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-blue-800">
+                <p className="font-semibold mb-1">HTML Editing Enabled</p>
+                <p>You can use HTML tags like <code className="bg-blue-100 px-1 rounded">&lt;h1&gt;</code>, <code className="bg-blue-100 px-1 rounded">&lt;p&gt;</code>, <code className="bg-blue-100 px-1 rounded">&lt;ul&gt;</code>, <code className="bg-blue-100 px-1 rounded">&lt;strong&gt;</code>, etc.</p>
+                <p className="mt-1">The formatted version will be displayed to users.</p>
               </div>
             </div>
           </div>
-        )}
+
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600 mx-auto mb-3"></div>
+                <p className="text-gray-600">Loading content...</p>
+              </div>
+            </div>
+          ) : isEditing ? (
+            /* HTML Editor Mode */
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  HTML Content (Edit Mode)
+                </label>
+                <textarea
+                  value={currentContent}
+                  onChange={(e) => {
+                    if (activeTab === 'terms') {
+                      setTermsContent(e.target.value);
+                    } else {
+                      setHouseRulesContent(e.target.value);
+                    }
+                  }}
+                  className="w-full p-3 sm:p-4 border-2 border-emerald-600 rounded-lg outline-none focus:ring-2 focus:ring-emerald-200 font-mono text-xs sm:text-sm min-h-[300px] sm:min-h-[500px]"
+                  placeholder={activeTab === 'terms' 
+                    ? "<h1>Zennest Terms and Conditions</h1>&#10;<p>Welcome to Zennest...</p>&#10;<ul>&#10;  <li>Point 1</li>&#10;  <li>Point 2</li>&#10;</ul>"
+                    : "<h1>House Rules</h1>&#10;<p>Please follow these house rules...</p>&#10;<ul>&#10;  <li>Rule 1</li>&#10;  <li>Rule 2</li>&#10;</ul>"
+                  }
+                />
+                <p className="text-xs text-gray-500 mt-2">
+                  💡 Raw HTML is saved exactly as typed. No sanitization applied.
+                </p>
+              </div>
+            </div>
+          ) : (
+            /* Preview Mode */
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Formatted Preview (How users will see it)
+                </label>
+                <div className="border-2 border-gray-200 rounded-lg p-3 sm:p-6 bg-gray-50 min-h-[300px] sm:min-h-[500px] overflow-auto">
+                  {currentContent ? (
+                    <div 
+                      className="prose max-w-none"
+                      dangerouslySetInnerHTML={{ __html: currentContent }}
+                    />
+                  ) : (
+                    <p className="text-gray-400 italic">
+                      No {activeTab === 'terms' ? 'terms' : 'house rules'} content available. Click "Edit {activeTab === 'terms' ? 'Terms' : 'House Rules'}" to add content.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </motion.div>
   );
