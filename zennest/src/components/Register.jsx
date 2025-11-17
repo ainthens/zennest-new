@@ -25,6 +25,8 @@ import {
 } from "react-icons/fa";
 import { getAuth, fetchSignInMethodsForEmail } from "firebase/auth";
 import { checkEmailExists } from "../services/firestoreService";
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
 
 // Google Logo SVG
 const GoogleLogo = () => (
@@ -73,7 +75,12 @@ const Register = () => {
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [hasViewedTerms, setHasViewedTerms] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
-  
+
+  // ADD: terms HTML state
+  const [termsHTML, setTermsHTML] = useState('');
+  const [termsLoading, setTermsLoading] = useState(true);
+  const [termsError, setTermsError] = useState('');
+
   const navigate = useNavigate();
   const location = useLocation();
   const { signInWithGoogle } = useAuth();
@@ -393,6 +400,30 @@ const Register = () => {
       setError(getAuthErrorMessage(err.code));
     }
   };
+
+  // FETCH TERMS (raw HTML from Firestore admin/termsAndConditions)
+  useEffect(() => {
+    const fetchTerms = async () => {
+      setTermsLoading(true);
+      try {
+        const ref = doc(db, 'admin', 'termsAndConditions');
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          const data = snap.data();
+          setTermsHTML(data.content || '<p>Terms & Conditions will be available soon.</p>');
+        } else {
+          setTermsHTML('<p>No Terms & Conditions have been published yet.</p>');
+        }
+      } catch (err) {
+        console.error('Terms fetch error:', err);
+        setTermsError('Failed to load Terms & Conditions.');
+        setTermsHTML('<p style="color:red;">Failed to load Terms & Conditions.</p>');
+      } finally {
+        setTermsLoading(false);
+      }
+    };
+    fetchTerms();
+  }, []);
 
   return (
     <section 
@@ -974,7 +1005,10 @@ const Register = () => {
       {/* Terms and Conditions Modal */}
       <AnimatePresence>
         {showTermsModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setShowTermsModal(false)}>
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+            onClick={() => setShowTermsModal(false)}
+          >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -983,7 +1017,7 @@ const Register = () => {
               onClick={(e) => e.stopPropagation()}
               style={{ fontFamily: 'Poppins, sans-serif' }}
             >
-              {/* Modal Header */}
+              {/* Header */}
               <div className="sticky top-0 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white p-6 flex items-center justify-between z-10">
                 <div>
                   <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
@@ -991,7 +1025,11 @@ const Register = () => {
                     Terms and Conditions
                   </h2>
                   <p className="text-xs text-emerald-100 mt-1">
-                    Last Updated: November 5, 2025
+                    {termsLoading
+                      ? 'Loading...'
+                      : termsError
+                        ? 'Error loading terms'
+                        : 'Published Terms'}
                   </p>
                 </div>
                 <button
@@ -1003,142 +1041,25 @@ const Register = () => {
                 </button>
               </div>
 
-              {/* Modal Content */}
-              <div className="overflow-y-auto max-h-[calc(85vh-200px)] p-6 space-y-6">
-                <div className="space-y-4">
-                  <h3 className="text-base font-bold text-gray-900">1. Acceptance of Terms</h3>
-                  <p className="text-xs text-gray-700 leading-relaxed">
-                    By accessing and using Zennest, you accept and agree to be bound by the terms and provision of this agreement. If you do not agree to these terms, please do not use our service.
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  <h3 className="text-base font-bold text-gray-900">2. User Account and Responsibilities</h3>
-                  <ul className="space-y-2 ml-4">
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>You must provide accurate and complete information when creating your account.</span>
-                    </li>
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>You are responsible for maintaining the security of your account credentials.</span>
-                    </li>
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>You must be at least 18 years old to register as a user.</span>
-                    </li>
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>You agree to notify us immediately of any unauthorized use of your account.</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="space-y-4">
-                  <h3 className="text-base font-bold text-gray-900">3. Bookings and Payments</h3>
-                  <ul className="space-y-2 ml-4">
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>All bookings are subject to availability and confirmation by the host.</span>
-                    </li>
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>Payment processing is handled securely through our trusted payment partners.</span>
-                    </li>
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>Cancellation policies vary by listing and are set by individual hosts.</span>
-                    </li>
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>Service fees may apply to bookings and are clearly displayed before payment.</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="space-y-4">
-                  <h3 className="text-base font-bold text-gray-900">4. User Conduct</h3>
-                  <ul className="space-y-2 ml-4">
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>You agree to use Zennest only for lawful purposes.</span>
-                    </li>
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>You must not engage in fraudulent activity or misrepresent yourself.</span>
-                    </li>
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>Harassment, discrimination, or abusive behavior towards hosts or other users is prohibited.</span>
-                    </li>
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>You must respect the property and rules set by hosts.</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="space-y-4">
-                  <h3 className="text-base font-bold text-gray-900">5. Privacy and Data Protection</h3>
-                  <p className="text-xs text-gray-700 leading-relaxed">
-                    Your personal information is handled in accordance with our Privacy Policy. We use industry-standard security measures to protect your data. You agree to our collection and use of your information as described in our Privacy Policy.
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  <h3 className="text-base font-bold text-gray-900">6. Intellectual Property</h3>
-                  <p className="text-xs text-gray-700 leading-relaxed">
-                    All content on Zennest, including text, graphics, logos, and software, is the property of Zennest or its content suppliers and is protected by copyright and intellectual property laws. You may not reproduce, distribute, or create derivative works without permission.
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  <h3 className="text-base font-bold text-gray-900">7. Liability and Disclaimers</h3>
-                  <ul className="space-y-2 ml-4">
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>Zennest acts as a platform connecting guests and hosts; we are not responsible for the actions of hosts or guests.</span>
-                    </li>
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>We do not guarantee the accuracy or quality of listings or services provided by hosts.</span>
-                    </li>
-                    <li className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                      <span className="text-emerald-600 mt-1">•</span>
-                      <span>Zennest is not liable for any indirect, incidental, or consequential damages.</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="space-y-4">
-                  <h3 className="text-base font-bold text-gray-900">8. Dispute Resolution</h3>
-                  <p className="text-xs text-gray-700 leading-relaxed">
-                    Any disputes arising from your use of Zennest will be resolved through binding arbitration in accordance with Philippine law. You agree to waive your right to participate in class action lawsuits.
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  <h3 className="text-base font-bold text-gray-900">9. Termination</h3>
-                  <p className="text-xs text-gray-700 leading-relaxed">
-                    Zennest reserves the right to suspend or terminate your account at any time for violations of these terms, fraudulent activity, or other reasons at our discretion. You may also terminate your account at any time.
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  <h3 className="text-base font-bold text-gray-900">10. Modifications to Terms</h3>
-                  <p className="text-xs text-gray-700 leading-relaxed">
-                    Zennest may update these terms at any time. We will notify you of material changes via email or platform notifications. Continued use of our service after changes constitutes acceptance of the new terms.
-                  </p>
-                </div>
-
-                <div className="pt-4 border-t border-gray-200">
-                  <p className="text-xs text-gray-600 italic leading-relaxed">
-                    By checking the box and proceeding with registration, you acknowledge that you have read, understood, and agree to be bound by these Terms and Conditions.
-                  </p>
-                </div>
+              {/* Content */}
+              <div className="overflow-y-auto max-h-[calc(85vh-200px)] p-6">
+                {termsLoading ? (
+                  <div className="flex items-center justify-center py-16">
+                    <div className="text-center">
+                      <div className="w-10 h-10 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                      <p className="text-xs text-gray-600">Fetching Terms & Conditions...</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    className="prose prose-sm max-w-none"
+                    // Render RAW HTML (unsanitized as requested)
+                    dangerouslySetInnerHTML={{ __html: termsHTML }}
+                  />
+                )}
               </div>
 
-              {/* Modal Footer */}
+              {/* Footer */}
               <div className="sticky bottom-0 bg-gray-50 p-6 border-t border-gray-200 flex flex-col sm:flex-row gap-3">
                 <button
                   onClick={() => {
@@ -1146,7 +1067,8 @@ const Register = () => {
                     setAcceptedTerms(true);
                     setShowTermsModal(false);
                   }}
-                  className="flex-1 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white py-3 px-5 rounded-lg hover:from-emerald-700 hover:to-emerald-800 transition-all duration-200 font-semibold text-sm shadow-lg shadow-emerald-200 flex items-center justify-center gap-2"
+                  disabled={termsLoading}
+                  className="flex-1 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white py-3 px-5 rounded-lg hover:from-emerald-700 hover:to-emerald-800 transition-all duration-200 font-semibold text-sm shadow-lg shadow-emerald-200 flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   <FaCheck className="text-sm" />
                   I Accept the Terms

@@ -240,6 +240,15 @@ const AdminDashboard = () => {
     cancelledBookings: [],
     upcomingBookings: []
   });
+  const [reportFilter, setReportFilter] = useState('all'); // 'all', 'completed', 'cancelled', 'upcoming'
+  const [filteredBookings, setFilteredBookings] = useState([]);
+  const [termsContent, setTermsContent] = useState('');
+  const [savingTerms, setSavingTerms] = useState(false);
+
+  // ADD MISSING STATE VARIABLES (fixes ReferenceError)
+  const [users, setUsers] = useState([]);
+  const [listings, setListings] = useState([]);
+  const [bookings, setBookings] = useState([]);
 
   // ✅ FIXED: REMOVED all admin authentication checks
   // AdminRoute.jsx handles access control - this component assumes it only renders when admin is verified
@@ -437,16 +446,37 @@ const AdminDashboard = () => {
   // Fetch terms and conditions
   const fetchTermsAndConditions = async () => {
     try {
-      const termsRef = doc(db, 'admin', 'termsAndConditions');
-      const termsSnap = await getDoc(termsRef);
-      
-      if (termsSnap.exists()) {
-        setTermsAndConditions(termsSnap.data().content || '');
-      } else {
-        setTermsAndConditions('Terms and conditions will be displayed here.');
+      const termsDoc = await getDoc(doc(db, 'admin', 'termsAndConditions'));
+      if (termsDoc.exists()) {
+        setTermsContent(termsDoc.data().content || '');
       }
     } catch (error) {
-      console.error('Error fetching terms and conditions:', error);
+      console.error('Error fetching terms:', error);
+    }
+  };
+
+  // KEEP ONLY THIS VERSION - Save Terms and Conditions (HTML version)
+  const handleSaveTerms = async () => {
+    if (!termsContent.trim()) {
+      showToast('Terms content cannot be empty', 'error');
+      return;
+    }
+
+    setSavingTerms(true);
+    try {
+      // Save RAW HTML to Firestore (no sanitization)
+      await setDoc(doc(db, 'admin', 'termsAndConditions'), {
+        content: termsContent, // Store HTML exactly as typed
+        lastUpdated: new Date().toISOString(),
+        updatedBy: user?.uid || 'admin'
+      });
+      showToast('Terms & Conditions updated successfully');
+      setEditingTerms(false);
+    } catch (error) {
+      console.error('Error saving terms:', error);
+      showToast('Failed to save terms', 'error');
+    } finally {
+      setSavingTerms(false);
     }
   };
 
@@ -549,66 +579,71 @@ const AdminDashboard = () => {
   // Fetch report data
   const fetchReportData = async () => {
     try {
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+      const [usersSnapshot, listingsSnapshot, bookingsSnapshot] = await Promise.all([
+        getDocs(collection(db, 'users')),
 
-      const [listingsSnapshot, bookingsSnapshot, hostsSnapshot] = await Promise.all([
         getDocs(collection(db, 'listings')),
-        getDocs(collection(db, 'bookings')),
-        getDocs(collection(db, 'hosts'))
+
+        getDocs(collection(db, 'bookings'))
       ]);
 
-      // Listings this month
-      const listingsThisMonth = [];
-      listingsSnapshot.forEach(doc => {
-        const listing = doc.data();
-        const createdAt = listing.createdAt?.toDate ? listing.createdAt.toDate() : 
-                         (listing.createdAt instanceof Date ? listing.createdAt : null);
-        if (createdAt && createdAt >= startOfMonth && createdAt <= endOfMonth) {
-          listingsThisMonth.push({ id: doc.id, ...listing, createdAt });
-        }
+      const usersData = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const listingsData = listingsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const bookingsData = bookingsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      // Categorize bookings
+      const now = new Date();
+      const completedBookings = bookingsData.filter(b => b.status === 'completed');
+      const cancelledBookings = bookingsData.filter(b => b.status === 'cancelled');
+      const upcomingBookings = bookingsData.filter(b => {
+        if (b.status !== 'confirmed') return false;
+        const checkIn = b.checkIn?.toDate ? b.checkIn.toDate() : new Date(b.checkIn);
+        return checkIn > now;
       });
 
-      // Cancelled bookings
-      const cancelledBookings = [];
-      bookingsSnapshot.forEach(doc => {
-        const booking = doc.data();
-        if (booking.status === 'cancelled') {
-          cancelledBookings.push({ id: doc.id, ...booking });
-        }
-      });
+      setUsers(usersData);
+      setListings(listingsData);
+      setBookings(bookingsData);
+      setFilteredBookings(bookingsData); // Default to all
 
-      // Upcoming bookings
-      const upcomingBookings = [];
-      bookingsSnapshot.forEach(doc => {
-        const booking = doc.data();
-        const checkIn = booking.checkIn?.toDate ? booking.checkIn.toDate() : 
-                       (booking.checkIn instanceof Date ? booking.checkIn : null);
-        if (checkIn && checkIn > now && booking.status !== 'cancelled') {
-          upcomingBookings.push({ id: doc.id, ...booking, checkIn });
-        }
-      });
-
-      // Active subscribers
-      const subscribers = [];
-      hostsSnapshot.forEach(doc => {
-        const host = doc.data();
-        if (host.subscriptionStatus === 'active') {
-          subscribers.push({ id: doc.id, ...host });
-        }
-      });
-
-      setReportData({
-        listingsThisMonth,
-        subscribers,
-        cancelledBookings,
-        upcomingBookings
+      console.log('📊 Report categories:', {
+        total: bookingsData.length,
+        completed: completedBookings.length,
+        cancelled: cancelledBookings.length,
+        upcoming: upcomingBookings.length
       });
     } catch (error) {
       console.error('Error fetching report data:', error);
     }
   };
+
+  // Filter bookings based on selected filter
+  useEffect(() => {
+    if (!bookings.length) return;
+
+    const now = new Date();
+    let filtered = [];
+
+    switch (reportFilter) {
+      case 'completed':
+        filtered = bookings.filter(b => b.status === 'completed');
+        break;
+      case 'cancelled':
+        filtered = bookings.filter(b => b.status === 'cancelled');
+        break;
+      case 'upcoming':
+        filtered = bookings.filter(b => {
+          if (b.status !== 'confirmed') return false;
+          const checkIn = b.checkIn?.toDate ? b.checkIn.toDate() : new Date(b.checkIn);
+          return checkIn > now;
+        });
+        break;
+      default:
+        filtered = bookings;
+    }
+
+    setFilteredBookings(filtered);
+  }, [reportFilter, bookings]);
 
   // Toast Helper
   const showToast = (message, type = 'success') => {
@@ -621,7 +656,7 @@ const AdminDashboard = () => {
     try {
       console.log('🚪 Admin logout initiated');
       
-      // ✅ Clear admin flag using NEW keys
+      // Clear admin flag
       localStorage.removeItem('isAdmin');
       localStorage.removeItem('adminLoginTime');
       
@@ -659,22 +694,6 @@ const AdminDashboard = () => {
       setEditingPolicy(null);
     } catch (error) {
       showToast('Failed to update policy', 'error');
-    }
-  };
-
-  // Save Terms and Conditions
-  const handleSaveTerms = async () => {
-    try {
-      const termsRef = doc(db, 'admin', 'termsAndConditions');
-      await setDoc(termsRef, {
-        content: termsAndConditions,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      setEditingTerms(false);
-      showToast('Terms and conditions saved successfully');
-    } catch (error) {
-      console.error('Error saving terms:', error);
-      showToast('Failed to save terms and conditions', 'error');
     }
   };
 
@@ -1455,60 +1474,102 @@ const AdminDashboard = () => {
                 >
                   <div>
                     <h1 className="text-3xl font-bold text-gray-900">Terms & Conditions</h1>
-                    <p className="text-gray-600 mt-1">Create and manage terms and conditions that guests can view from the footer.</p>
+                    <p className="text-gray-600 mt-1">Create and manage HTML-formatted terms that appear on host registration.</p>
                   </div>
 
                   <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-                    <SectionHeader icon={FaFileContract} title="Terms and Conditions Content" />
-                    <div className="space-y-4">
-                      <textarea
-                        value={termsAndConditions}
-                        onChange={(e) => setTermsAndConditions(e.target.value)}
-                        disabled={!editingTerms}
-                        className={`w-full p-4 border rounded-lg outline-none transition-all min-h-[400px] ${
-                          editingTerms
-                            ? 'border-emerald-600 focus:ring-2 focus:ring-emerald-200'
-                            : 'border-gray-200 bg-gray-50'
-                        }`}
-                        placeholder="Enter terms and conditions content here..."
-                      />
-                      <div className="flex gap-3">
-                        {!editingTerms ? (
-                          <motion.button
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
-                            onClick={() => setEditingTerms(true)}
-                            className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold flex items-center gap-2"
+                    <div className="flex items-center justify-between mb-6">
+                      <SectionHeader icon={FaFileContract} title="Terms & Conditions Editor" />
+                      {!editingTerms ? (
+                        <button
+                          onClick={() => setEditingTerms(true)}
+                          className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold flex items-center gap-2"
+                        >
+                          <FaEdit />
+                          Edit Terms
+                        </button>
+                      ) : (
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleSaveTerms}
+                            disabled={savingTerms}
+                            className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold disabled:opacity-50"
                           >
-                            <FaEdit />
-                            Edit Terms
-                          </motion.button>
-                        ) : (
-                          <>
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => {
-                                setEditingTerms(false);
-                                fetchTermsAndConditions();
-                              }}
-                              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors font-semibold"
-                            >
-                              Cancel
-                            </motion.button>
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={handleSaveTerms}
-                              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold flex items-center gap-2"
-                            >
-                              <FaSave />
-                              Save Changes
-                            </motion.button>
-                          </>
-                        )}
+                            {savingTerms ? (
+                              <>
+                                <FaSpinner className="inline animate-spin mr-2" />
+                                Saving...
+                              </>
+                            ) : (
+                              <>
+                                <FaSave className="inline mr-2" />
+                                Save Changes
+                              </>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingTerms(false);
+                              fetchTermsAndConditions();
+                            }}
+                            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-semibold"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Info Banner */}
+                    <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-4">
+                      <div className="flex gap-3">
+                        <FaInfoCircle className="text-blue-600 text-lg flex-shrink-0 mt-0.5" />
+                        <div className="text-sm text-blue-800">
+                          <p className="font-semibold mb-1">HTML Editing Enabled</p>
+                          <p>You can use HTML tags like <code className="bg-blue-100 px-1 rounded">&lt;h1&gt;</code>, <code className="bg-blue-100 px-1 rounded">&lt;p&gt;</code>, <code className="bg-blue-100 px-1 rounded">&lt;ul&gt;</code>, <code className="bg-blue-100 px-1 rounded">&lt;strong&gt;</code>, etc.</p>
+                          <p className="mt-1">The formatted version will be displayed to hosts during registration.</p>
+                        </div>
                       </div>
                     </div>
+
+                    {editingTerms ? (
+                      /* HTML Editor Mode */
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-2">
+                            HTML Content (Edit Mode)
+                          </label>
+                          <textarea
+                            value={termsContent}
+                            onChange={(e) => setTermsContent(e.target.value)}
+                            className="w-full p-4 border-2 border-emerald-600 rounded-lg outline-none focus:ring-2 focus:ring-emerald-200 font-mono text-sm min-h-[500px]"
+                            placeholder="<h1>Zennest Terms and Conditions</h1>&#10;<p>Welcome to Zennest...</p>&#10;<ul>&#10;  <li>Point 1</li>&#10;  <li>Point 2</li>&#10;</ul>"
+                          />
+                          <p className="text-xs text-gray-500 mt-2">
+                            💡 Raw HTML is saved exactly as typed. No sanitization applied.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Preview Mode */
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-2">
+                            Formatted Preview (How hosts will see it)
+                          </label>
+                          <div className="border-2 border-gray-200 rounded-lg p-6 bg-gray-50 min-h-[500px] overflow-auto">
+                            {termsContent ? (
+                              <div 
+                                className="prose max-w-none"
+                                dangerouslySetInnerHTML={{ __html: termsContent }}
+                              />
+                            ) : (
+                              <p className="text-gray-400 italic">No terms content available. Click "Edit Terms" to add content.</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </motion.div>
               )}

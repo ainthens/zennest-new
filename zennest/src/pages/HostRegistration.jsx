@@ -1,4 +1,4 @@
-// src/pages/HostRegistration.jsx
+  // src/pages/HostRegistration.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -22,6 +22,8 @@ import {
   FaCrown,
   FaCheckCircle
 } from 'react-icons/fa';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
 
 // PayPal Buttons Wrapper with loading state detection
 const PayPalButtonsWrapper = ({ createOrder, onApprove, onError, onCancel, style, disabled }) => {
@@ -112,6 +114,8 @@ const HostRegistration = () => {
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [paymentDetails, setPaymentDetails] = useState(null);
+  const [termsContent, setTermsContent] = useState('');
+  const [termsLoading, setTermsLoading] = useState(true);
 
   // Update step when location.state changes
   useEffect(() => {
@@ -179,119 +183,26 @@ const HostRegistration = () => {
     }
   };
 
-  const termsAndConditions = {
-    title: "Zennest Host Terms and Conditions",
-    lastUpdated: "November 5, 2025",
-    sections: [
-      {
-        title: "1. Host Account and Responsibilities",
-        content: [
-          "By creating a host account, you agree to provide accurate and complete information about yourself and your properties.",
-          "You are responsible for maintaining the security of your account credentials.",
-          "You must be at least 18 years old to register as a host.",
-          "You agree to comply with all local laws and regulations regarding property rental and hosting."
-        ]
-      },
-      {
-        title: "2. Property Listings",
-        content: [
-          "All property information must be accurate, complete, and up-to-date.",
-          "You must have legal authority to list and rent the properties on our platform.",
-          "Property photos must accurately represent the actual property and its condition.",
-          "You are responsible for setting competitive and fair pricing for your listings."
-        ]
-      },
-      {
-        title: "3. Subscription and Payments",
-        content: [
-          "Host subscriptions are billed monthly or annually based on your selected plan.",
-          "Subscription fees are non-refundable except as required by law.",
-          "You authorize Zennest to charge your payment method for recurring subscription fees.",
-          "Failure to pay subscription fees may result in account suspension or termination.",
-          "Zennest reserves the right to modify subscription pricing with 30 days notice."
-        ]
-      },
-      {
-        title: "4. Guest Interactions and Bookings",
-        content: [
-          "You must respond to guest inquiries and booking requests in a timely manner.",
-          "You agree to honor confirmed bookings and maintain high standards of hospitality.",
-          "You are responsible for ensuring your property meets all safety and legal requirements.",
-          "Any disputes with guests should be resolved professionally and in accordance with our policies."
-        ]
-      },
-      {
-        title: "5. Commission and Fees",
-        content: [
-          "Zennest charges a service fee on each booking, as outlined in your host agreement.",
-          "Payment processing fees may apply to transactions.",
-          "You will receive payments for bookings according to our standard payment schedule.",
-          "All fees and commissions are subject to applicable taxes."
-        ]
-      },
-      {
-        title: "6. Cancellation and Refund Policy",
-        content: [
-          "You must establish and adhere to a clear cancellation policy for your listings.",
-          "Frequent cancellations may result in penalties or account suspension.",
-          "You are responsible for managing guest refunds according to your stated policy.",
-          "Zennest reserves the right to issue refunds to guests in cases of policy violations."
-        ]
-      },
-      {
-        title: "7. Content and Intellectual Property",
-        content: [
-          "You grant Zennest a license to use your property photos and descriptions for marketing purposes.",
-          "You retain ownership of your content but must not infringe on others' intellectual property rights.",
-          "Zennest may remove content that violates our policies or applicable laws."
-        ]
-      },
-      {
-        title: "8. Prohibited Activities",
-        content: [
-          "You may not discriminate against guests based on race, religion, gender, or other protected characteristics.",
-          "Fraudulent listings, fake reviews, or misleading information are strictly prohibited.",
-          "You may not use the platform for illegal activities or to list properties you don't have authority to rent.",
-          "Manipulation of pricing, reviews, or search rankings is not allowed."
-        ]
-      },
-      {
-        title: "9. Account Termination",
-        content: [
-          "Zennest reserves the right to suspend or terminate your account for violations of these terms.",
-          "You may cancel your account at any time, subject to fulfilling existing booking obligations.",
-          "Upon termination, you must remove all listings and complete pending transactions.",
-          "Subscription fees for the current billing period are non-refundable upon termination."
-        ]
-      },
-      {
-        title: "10. Liability and Indemnification",
-        content: [
-          "You are responsible for any damage, injury, or loss that occurs on your property.",
-          "You agree to maintain appropriate insurance coverage for your rental properties.",
-          "You indemnify Zennest against claims arising from your use of the platform or guest interactions.",
-          "Zennest is not liable for any indirect, incidental, or consequential damages."
-        ]
-      },
-      {
-        title: "11. Privacy and Data Protection",
-        content: [
-          "Your personal information is handled in accordance with our Privacy Policy.",
-          "You agree to protect guest privacy and use their information only for booking purposes.",
-          "You must comply with applicable data protection laws, including GDPR where applicable."
-        ]
-      },
-      {
-        title: "12. Modifications to Terms",
-        content: [
-          "Zennest may update these terms at any time with notice to hosts.",
-          "Continued use of the platform after changes constitutes acceptance of new terms.",
-          "Material changes will be communicated via email and/or platform notifications."
-        ]
+  // Fetch Terms & Conditions HTML from Firestore
+  useEffect(() => {
+    const fetchTerms = async () => {
+      try {
+        const termsDoc = await getDoc(doc(db, 'admin', 'termsAndConditions'));
+        if (termsDoc.exists()) {
+          const htmlContent = termsDoc.data().content || '';
+          setTermsContent(htmlContent); // Store raw HTML
+        } else {
+          setTermsContent('<p>Terms & Conditions will be available soon.</p>');
+        }
+      } catch (error) {
+        console.error('Error fetching terms:', error);
+        setTermsContent('<p style="color:red;">Failed to load Terms & Conditions. Please contact support.</p>');
+      } finally {
+        setTermsLoading(false);
       }
-    ],
-    footer: "By checking the box below and proceeding with registration, you acknowledge that you have read, understood, and agree to be bound by these Terms and Conditions."
-  };
+    };
+    fetchTerms();
+  }, []);
 
   const handleChange = (e) => {
     setFormData(prev => ({
@@ -1262,15 +1173,12 @@ const HostRegistration = () => {
               onClick={(e) => e.stopPropagation()}
             >
               {/* Modal Header */}
-              <div className="sticky top-0 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white p-4 sm:p-6 flex items-center justify-between">
+              <div className="sticky top-0 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white p-4 sm:p-6 flex items-center justify-between z-10">
                 <div className="flex-1 min-w-0 pr-2">
                   <h2 className="text-lg sm:text-xl md:text-2xl font-bold flex items-center gap-2">
                     <FaFileContract className="flex-shrink-0" />
-                    <span className="truncate">{termsAndConditions.title}</span>
+                    <span className="truncate">Zennest Host Terms and Conditions</span>
                   </h2>
-                  <p className="text-xs text-emerald-100 mt-1">
-                    Last Updated: {termsAndConditions.lastUpdated}
-                  </p>
                 </div>
                 <button
                   onClick={() => setShowTermsModal(false)}
@@ -1281,39 +1189,32 @@ const HostRegistration = () => {
                 </button>
               </div>
 
-              {/* Modal Content */}
-              <div className="overflow-y-auto max-h-[calc(90vh-180px)] sm:max-h-[calc(85vh-200px)] p-4 sm:p-6 space-y-4 sm:space-y-6">
-                {termsAndConditions.sections.map((section, index) => (
-                  <div key={index} className="space-y-2 sm:space-y-3">
-                    <h3 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
-                      {section.title}
-                    </h3>
-                    <ul className="space-y-1.5 sm:space-y-2 ml-2 sm:ml-4">
-                      {section.content.map((item, idx) => (
-                        <li key={idx} className="text-xs text-gray-700 leading-relaxed flex items-start gap-2">
-                          <span className="text-emerald-600 mt-1 flex-shrink-0">•</span>
-                          <span>{item}</span>
-                        </li>
-                      ))}
-                    </ul>
+              {/* Modal Content - Render HTML */}
+              <div className="overflow-y-auto max-h-[calc(90vh-180px)] sm:max-h-[calc(85vh-200px)] p-4 sm:p-6">
+                {termsLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <div className="text-center">
+                      <div className="w-8 h-8 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                      <p className="text-sm text-gray-600">Loading terms...</p>
+                    </div>
                   </div>
-                ))}
-
-                <div className="pt-4 border-t border-gray-200">
-                  <p className="text-xs text-gray-600 italic leading-relaxed">
-                    {termsAndConditions.footer}
-                  </p>
-                </div>
+                ) : (
+                  <div 
+                    className="prose prose-sm sm:prose max-w-none"
+                    dangerouslySetInnerHTML={{ __html: termsContent }}
+                  />
+                )}
               </div>
 
               {/* Modal Footer */}
-              <div className="sticky bottom-0 bg-gray-50 p-4 sm:p-6 border-t border-gray-200 flex flex-col sm:flex-row gap-2 sm:gap-3">
+              <div className="sticky bottom-0 bg-gray-50 p-4 sm:p-6 border-t border-gray-200 flex flex-col sm:flex-row gap-2 sm:gap-3 z-10">
                 <button
                   onClick={() => {
                     setAcceptedTerms(true);
                     setShowTermsModal(false);
                   }}
-                  className="w-full sm:flex-1 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white py-2.5 sm:py-3 px-4 sm:px-5 rounded-lg hover:from-emerald-700 hover:to-emerald-800 transition-all duration-200 font-semibold text-xs sm:text-sm shadow-lg shadow-emerald-200 flex items-center justify-center gap-2"
+                  disabled={termsLoading}
+                  className="w-full sm:flex-1 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white py-2.5 sm:py-3 px-4 sm:px-5 rounded-lg hover:from-emerald-700 hover:to-emerald-800 transition-all duration-200 font-semibold text-xs sm:text-sm shadow-lg shadow-emerald-200 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <FaCheck className="text-xs sm:text-sm" />
                   Accept Terms
