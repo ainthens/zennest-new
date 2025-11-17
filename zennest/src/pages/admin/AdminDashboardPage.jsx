@@ -1,5 +1,5 @@
 // src/pages/admin/AdminDashboardPage.jsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import useAuth from '../../hooks/useAuth';
@@ -29,6 +29,7 @@ const AdminDashboardPage = () => {
   const [activeSection, setActiveSection] = useState('overview');
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState({ visible: false, message: '', type: 'success' });
+  const scrollContainerRef = useRef(null);
 
   // Data State
   const [stats, setStats] = useState({
@@ -75,6 +76,16 @@ const AdminDashboardPage = () => {
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  // Scroll to top when section changes
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+    }
+  }, [activeSection]);
 
   const fetchDashboardData = async () => {
     try {
@@ -214,7 +225,7 @@ const AdminDashboardPage = () => {
         />
 
         {/* Content Area - This is the scrollable area */}
-        <div className="flex-1 overflow-y-auto">
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
           <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 lg:py-8">
             <AnimatePresence mode="wait">
               {/* Dashboard Overview */}

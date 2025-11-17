@@ -198,13 +198,6 @@ const HostVouchers = () => {
     return { label: 'Available', color: 'green', icon: FaCheckCircle };
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-50 pt-20">
-        <Loading message="Loading vouchers..." size="large" fullScreen={false} className="pt-20" />
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-slate-50 pt-20">

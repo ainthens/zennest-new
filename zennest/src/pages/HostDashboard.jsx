@@ -40,6 +40,7 @@ const HostDashboard = () => {
   const [financialExpanded, setFinancialExpanded] = useState(true);
   const [accountExpanded, setAccountExpanded] = useState(true);
   const logoutModalRef = useRef(null);
+  const mainContentRef = useRef(null);
   
   // Update active tab based on current location
   useEffect(() => {
@@ -53,6 +54,17 @@ const HostDashboard = () => {
     else if (path.includes('/vouchers')) setActiveTab('vouchers');
     else if (path.includes('/settings')) setActiveTab('settings');
     else setActiveTab('dashboard');
+  }, [location.pathname]);
+
+  // Scroll to top when route changes
+  useEffect(() => {
+    // Scroll the main content area to top when route changes
+    if (mainContentRef.current) {
+      mainContentRef.current.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+    }
   }, [location.pathname]);
 
   // Fetch host profile - RequireHostAuth already verified user is a host
@@ -479,7 +491,7 @@ const HostDashboard = () => {
       )}
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto h-screen w-full">
+      <main ref={mainContentRef} className="flex-1 overflow-y-auto h-screen w-full">
         {/* Mobile Header */}
         <div className="lg:hidden bg-white shadow-sm p-3 sm:p-4 flex items-center justify-between flex-shrink-0 sticky top-0 z-40">
           <button

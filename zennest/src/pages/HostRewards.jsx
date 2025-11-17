@@ -1,8 +1,8 @@
 // src/pages/HostRewards.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getHostProfile, updateHostPoints, getHostBookings } from '../services/firestoreService';
-import { collection, query, where, getDocs, orderBy, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import useAuth from '../hooks/useAuth';
 import {
@@ -32,11 +32,15 @@ const HostRewards = () => {
   const [showCodeModal, setShowCodeModal] = useState(false);
   const [redeemedCode, setRedeemedCode] = useState(null); // Store the code and reward info for the modal
   const [copied, setCopied] = useState(false);
+  const [rewards, setRewards] = useState([]); // Store fetched rewards from Firestore
+  const [waysToEarn, setWaysToEarn] = useState([]); // Store fetched ways to earn points
 
   useEffect(() => {
     if (user) {
       fetchRewardsData();
       checkClaimedRewards();
+      fetchRewardsFromFirestore();
+      fetchWaysToEarnFromFirestore();
     }
   }, [user]);
 
@@ -250,6 +254,176 @@ const HostRewards = () => {
     }
   };
 
+  // Fetch rewards from Firestore
+  const fetchRewardsFromFirestore = async () => {
+    try {
+      // Try to fetch from admin/rewards document
+      const rewardsDocRef = doc(db, 'admin', 'rewards');
+      const rewardsDoc = await getDoc(rewardsDocRef);
+      
+      if (rewardsDoc.exists()) {
+        const data = rewardsDoc.data();
+        if (data.rewards && Array.isArray(data.rewards)) {
+          // Map the rewards to include icon mappings if needed
+          const fetchedRewards = data.rewards.map(reward => ({
+            points: reward.points || 0,
+            reward: reward.reward || reward.name || 'Reward',
+            type: reward.type || 'code',
+            creditValue: reward.creditValue || reward.credit || 0,
+            available: false // Will be calculated based on user's points
+          }));
+          setRewards(fetchedRewards);
+          return;
+        }
+      }
+      
+      // Fallback: Try 'rewards' collection
+      try {
+        const rewardsCollectionRef = collection(db, 'rewards');
+        const rewardsQuery = query(rewardsCollectionRef, orderBy('points', 'asc'));
+        const rewardsSnapshot = await getDocs(rewardsQuery);
+        
+        if (!rewardsSnapshot.empty) {
+          const fetchedRewards = [];
+          rewardsSnapshot.forEach((doc) => {
+            const data = doc.data();
+            fetchedRewards.push({
+              id: doc.id,
+              points: data.points || 0,
+              reward: data.reward || data.name || 'Reward',
+              type: data.type || 'code',
+              creditValue: data.creditValue || data.credit || 0,
+              available: false
+            });
+          });
+          setRewards(fetchedRewards);
+          return;
+        }
+      } catch (collectionError) {
+        console.log('Rewards collection not found, using defaults');
+      }
+      
+      // If no rewards found in Firestore, use default rewards
+      const defaultRewards = [
+        { points: 30, reward: 'E-wallet Credit (₱200)', type: 'code', creditValue: 200, available: false },
+        { points: 500, reward: 'E-wallet Credit (₱500)', type: 'code', creditValue: 500, available: false },
+        { points: 1000, reward: 'E-wallet Credit (₱1,000)', type: 'code', creditValue: 1000, available: false },
+        { points: 2000, reward: 'E-wallet Credit (₱2,000)', type: 'code', creditValue: 2000, available: false },
+        { points: 2500, reward: 'E-wallet Credit (₱2,500)', type: 'code', creditValue: 2500, available: false },
+        { points: 5000, reward: 'E-wallet Credit (₱5,000)', type: 'code', creditValue: 5000, available: false },
+        { points: 7500, reward: 'E-wallet Credit (₱7,500)', type: 'code', creditValue: 7500, available: false },
+        { points: 10000, reward: 'E-wallet Credit (₱10,000)', type: 'code', creditValue: 10000, available: false }
+      ];
+      setRewards(defaultRewards);
+    } catch (error) {
+      console.error('Error fetching rewards from Firestore:', error);
+      // Use default rewards on error
+      const defaultRewards = [
+        { points: 30, reward: 'E-wallet Credit (₱200)', type: 'code', creditValue: 200, available: false },
+        { points: 500, reward: 'E-wallet Credit (₱500)', type: 'code', creditValue: 500, available: false },
+        { points: 1000, reward: 'E-wallet Credit (₱1,000)', type: 'code', creditValue: 1000, available: false },
+        { points: 2000, reward: 'E-wallet Credit (₱2,000)', type: 'code', creditValue: 2000, available: false },
+        { points: 2500, reward: 'E-wallet Credit (₱2,500)', type: 'code', creditValue: 2500, available: false },
+        { points: 5000, reward: 'E-wallet Credit (₱5,000)', type: 'code', creditValue: 5000, available: false },
+        { points: 7500, reward: 'E-wallet Credit (₱7,500)', type: 'code', creditValue: 7500, available: false },
+        { points: 10000, reward: 'E-wallet Credit (₱10,000)', type: 'code', creditValue: 10000, available: false }
+      ];
+      setRewards(defaultRewards);
+    }
+  };
+
+  // Fetch ways to earn points from Firestore
+  const fetchWaysToEarnFromFirestore = async () => {
+    try {
+      // Try to fetch from admin/rewards document
+      const rewardsDocRef = doc(db, 'admin', 'rewards');
+      const rewardsDoc = await getDoc(rewardsDocRef);
+      
+      if (rewardsDoc.exists()) {
+        const data = rewardsDoc.data();
+        if (data.waysToEarn && Array.isArray(data.waysToEarn)) {
+          const fetchedWaysToEarn = data.waysToEarn.map((way, index) => {
+            // Map icon names to actual icon components
+            const iconMap = {
+              'FaCheckCircle': FaCheckCircle,
+              'FaStar': FaStar,
+              'FaTrophy': FaTrophy,
+              'FaChartLine': FaChartLine,
+              'FaArrowUp': FaArrowUp,
+              'FaCoins': FaCoins
+            };
+            return {
+              action: way.action || way.title || 'Earn Points',
+              points: way.points || 0,
+              icon: iconMap[way.icon] || FaCheckCircle,
+              description: way.description || ''
+            };
+          });
+          setWaysToEarn(fetchedWaysToEarn);
+          return;
+        }
+      }
+      
+      // Fallback: Try 'waysToEarn' collection
+      try {
+        const waysToEarnRef = collection(db, 'waysToEarn');
+        const waysToEarnSnapshot = await getDocs(waysToEarnRef);
+        
+        if (!waysToEarnSnapshot.empty) {
+          const fetchedWaysToEarn = [];
+          const iconMap = {
+            'FaCheckCircle': FaCheckCircle,
+            'FaStar': FaStar,
+            'FaTrophy': FaTrophy,
+            'FaChartLine': FaChartLine,
+            'FaArrowUp': FaArrowUp,
+            'FaCoins': FaCoins
+          };
+          waysToEarnSnapshot.forEach((doc) => {
+            const data = doc.data();
+            fetchedWaysToEarn.push({
+              action: data.action || data.title || 'Earn Points',
+              points: data.points || 0,
+              icon: iconMap[data.icon] || FaCheckCircle,
+              description: data.description || ''
+            });
+          });
+          setWaysToEarn(fetchedWaysToEarn);
+          return;
+        }
+      } catch (collectionError) {
+        console.log('WaysToEarn collection not found, using defaults');
+      }
+      
+      // If no ways to earn found in Firestore, use default
+      const defaultWaysToEarn = [
+        { action: 'Complete first booking', points: 100, icon: FaCheckCircle, description: 'Get your first confirmed booking' },
+        { action: 'Publish a listing', points: 50, icon: FaCheckCircle, description: 'Publish your first listing' },
+        { action: 'Receive 5-star review', points: 25, icon: FaStar, description: 'Get a 5-star rating from a guest' },
+        { action: 'Complete 10 bookings', points: 250, icon: FaCheckCircle, description: 'Reach 10 confirmed bookings' },
+        { action: 'Complete 50 bookings', points: 1000, icon: FaTrophy, description: 'Reach 50 confirmed bookings' },
+        { action: 'Monthly active host', points: 100, icon: FaChartLine, description: 'Be active this month' },
+        { action: 'Refer a host', points: 200, icon: FaArrowUp, description: 'Refer another host to join' },
+        { action: 'Earn ₱10,000', points: 500, icon: FaCoins, description: 'Accumulate ₱10,000 in earnings' }
+      ];
+      setWaysToEarn(defaultWaysToEarn);
+    } catch (error) {
+      console.error('Error fetching ways to earn from Firestore:', error);
+      // Use default ways to earn on error
+      const defaultWaysToEarn = [
+        { action: 'Complete first booking', points: 100, icon: FaCheckCircle, description: 'Get your first confirmed booking' },
+        { action: 'Publish a listing', points: 50, icon: FaCheckCircle, description: 'Publish your first listing' },
+        { action: 'Receive 5-star review', points: 25, icon: FaStar, description: 'Get a 5-star rating from a guest' },
+        { action: 'Complete 10 bookings', points: 250, icon: FaCheckCircle, description: 'Reach 10 confirmed bookings' },
+        { action: 'Complete 50 bookings', points: 1000, icon: FaTrophy, description: 'Reach 50 confirmed bookings' },
+        { action: 'Monthly active host', points: 100, icon: FaChartLine, description: 'Be active this month' },
+        { action: 'Refer a host', points: 200, icon: FaArrowUp, description: 'Refer another host to join' },
+        { action: 'Earn ₱10,000', points: 500, icon: FaCoins, description: 'Accumulate ₱10,000 in earnings' }
+      ];
+      setWaysToEarn(defaultWaysToEarn);
+    }
+  };
+
   const copyToClipboard = async (text) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -275,83 +449,14 @@ const HostRewards = () => {
     }
   };
 
-  const rewards = [
-    { 
-      points: 30, 
-      reward: 'E-wallet Credit (₱200)', 
-      available: points >= 30,
-      type: 'code',
-      creditValue: 200
-    },
-    { 
-      points: 500, 
-      reward: 'E-wallet Credit (₱500)', 
-      available: points >= 500,
-      type: 'code',
-      creditValue: 500
-    },
-    { 
-      points: 1000, 
-      reward: 'E-wallet Credit (₱1,000)', 
-      available: points >= 1000,
-      type: 'code',
-      creditValue: 1000
-    },
-    { 
-      points: 2000, 
-      reward: 'E-wallet Credit (₱2,000)', 
-      available: points >= 2000,
-      type: 'code',
-      creditValue: 2000
-    },
-    { 
-      points: 2500, 
-      reward: 'E-wallet Credit (₱2,500)', 
-      available: points >= 2500,
-      type: 'code',
-      creditValue: 2500
-    },
-    { 
-      points: 5000, 
-      reward: 'E-wallet Credit (₱5,000)', 
-      available: points >= 5000,
-      type: 'code',
-      creditValue: 5000
-    },
-    { 
-      points: 7500, 
-      reward: 'E-wallet Credit (₱7,500)', 
-      available: points >= 7500,
-      type: 'code',
-      creditValue: 7500
-    },
-    { 
-      points: 10000, 
-      reward: 'E-wallet Credit (₱10,000)', 
-      available: points >= 10000,
-      type: 'code',
-      creditValue: 10000
-    }
-  ];
+  // Calculate available rewards based on user's current points
+  const availableRewards = useMemo(() => {
+    return rewards.map(reward => ({
+      ...reward,
+      available: points >= reward.points
+    }));
+  }, [rewards, points]);
 
-  const waysToEarn = [
-    { action: 'Complete first booking', points: 100, icon: FaCheckCircle, description: 'Get your first confirmed booking' },
-    { action: 'Publish a listing', points: 50, icon: FaCheckCircle, description: 'Publish your first listing' },
-    { action: 'Receive 5-star review', points: 25, icon: FaStar, description: 'Get a 5-star rating from a guest' },
-    { action: 'Complete 10 bookings', points: 250, icon: FaCheckCircle, description: 'Reach 10 confirmed bookings' },
-    { action: 'Complete 50 bookings', points: 1000, icon: FaTrophy, description: 'Reach 50 confirmed bookings' },
-    { action: 'Monthly active host', points: 100, icon: FaChartLine, description: 'Be active this month' },
-    { action: 'Refer a host', points: 200, icon: FaArrowUp, description: 'Refer another host to join' },
-    { action: 'Earn ₱10,000', points: 500, icon: FaCoins, description: 'Accumulate ₱10,000 in earnings' }
-  ];
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
@@ -451,6 +556,12 @@ const HostRewards = () => {
           </h2>
         </div>
         <div className="p-6">
+          {waysToEarn.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <FaCoins className="text-4xl mx-auto mb-4 text-gray-300" />
+              <p className="font-medium">No ways to earn points available</p>
+            </div>
+          ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {waysToEarn.map((way, index) => {
               const Icon = way.icon;
@@ -479,6 +590,7 @@ const HostRewards = () => {
               );
             })}
           </div>
+          )}
         </div>
       </div>
 
@@ -492,8 +604,15 @@ const HostRewards = () => {
           <p className="text-sm text-gray-600 mt-1">Each reward can only be claimed once. Claim your code and redeem it on the Payments & Earnings page.</p>
         </div>
         <div className="p-6">
+          {availableRewards.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <FaGift className="text-4xl mx-auto mb-4 text-gray-300" />
+              <p className="font-medium">No rewards available</p>
+              <p className="text-sm mt-2">Rewards will be available soon!</p>
+            </div>
+          ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {rewards.map((reward, index) => {
+            {availableRewards.map((reward, index) => {
               const isClaimed = claimedRewards.has(reward.reward);
               const canClaim = reward.available && !isClaimed;
               
@@ -570,6 +689,7 @@ const HostRewards = () => {
               );
             })}
           </div>
+          )}
         </div>
       </div>
 

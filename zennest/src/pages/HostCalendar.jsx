@@ -159,9 +159,6 @@ const HostCalendar = () => {
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'];
 
-  if (loading) {
-    return <Loading message="Loading calendar..." size="medium" fullScreen={false} />;
-  }
 
   return (
     <div className="space-y-6">
