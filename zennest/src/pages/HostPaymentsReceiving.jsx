@@ -150,29 +150,66 @@ const HostPaymentsReceiving = () => {
         return new Date(booking.checkOut);
       };
 
-      // Helper function to check if booking is completed
-      // A booking is completed if:
+      // Helper function to check if booking is active (between checkIn and checkOut)
+      const isBookingActive = (booking) => {
+        const checkInDate = getBookingDate(booking);
+        const checkOutDate = getCheckOutDate(booking);
+        
+        if (!checkInDate || !checkOutDate) {
+          // For bookings without dates (services/experiences), check status
+          if (booking.status === 'confirmed' || booking.status === 'active') {
+            return true;
+          }
+          return false;
+        }
+        
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        const checkIn = new Date(checkInDate);
+        checkIn.setHours(0, 0, 0, 0);
+        const checkOut = new Date(checkOutDate);
+        checkOut.setHours(0, 0, 0, 0);
+        
+        // Active if current date is between checkIn and checkOut (inclusive)
+        return now >= checkIn && now <= checkOut;
+      };
+
+      // Helper function to check if booking is completed or active (eligible for earnings)
+      // A booking is eligible for earnings if:
       // 1. Status is explicitly 'completed', OR
-      // 2. Status is 'confirmed' AND checkout date has passed
-      const isBookingCompleted = (booking) => {
+      // 2. Status is 'active', OR
+      // 3. Status is 'confirmed' AND (checkout date has passed OR booking is currently active)
+      const isBookingEligibleForEarnings = (booking) => {
         // Explicitly completed
         if (booking.status === 'completed') {
           return true;
         }
         
-        // Implicitly completed: confirmed booking where checkout date has passed
+        // Active status
+        if (booking.status === 'active') {
+          return true;
+        }
+        
+        // Confirmed bookings that are active or completed
         if (booking.status === 'confirmed') {
+          // Check if booking is currently active
+          if (isBookingActive(booking)) {
+            return true;
+          }
+          
+          // Check if checkout date has passed (completed)
           const checkOutDate = getCheckOutDate(booking);
           if (checkOutDate) {
             const now = new Date();
             now.setHours(0, 0, 0, 0);
             checkOutDate.setHours(0, 0, 0, 0);
             // Booking is completed if checkout date has passed
-            return now > checkOutDate;
+            if (now > checkOutDate) {
+              return true;
+            }
           }
           
-          // For bookings without checkout date (services/experiences), consider confirmed as completed
-          // Only if they don't have dates
+          // For bookings without checkout date (services/experiences), consider confirmed as eligible
           if (!booking.checkIn && !booking.checkOut) {
             return true;
           }
@@ -181,35 +218,31 @@ const HostPaymentsReceiving = () => {
         return false;
       };
 
-      // Helper function to check if booking is still upcoming (not completed yet)
+      // Helper function to check if booking is still upcoming (not eligible for earnings yet)
       // A booking is upcoming if:
-      // 1. Status is 'confirmed' AND checkout date hasn't passed yet
+      // 1. Status is 'confirmed' AND check-in date hasn't arrived yet
       const isBookingUpcoming = (booking) => {
-        if (booking.status !== 'confirmed') {
+        // Only confirmed bookings can be upcoming
+        if (booking.status !== 'confirmed' && booking.status !== 'pending_approval') {
           return false;
         }
         
-        // If booking has checkout date, check if it's in the future
-        const checkOutDate = getCheckOutDate(booking);
-        if (checkOutDate) {
-          const now = new Date();
-          now.setHours(0, 0, 0, 0);
-          checkOutDate.setHours(0, 0, 0, 0);
-          // Booking is upcoming if checkout date hasn't passed yet
-          return now <= checkOutDate;
-        }
-        
-        // For bookings without checkout date but with check-in date
-        // Check if check-in date is in the future
         const checkInDate = getBookingDate(booking);
         if (checkInDate) {
           const now = new Date();
           now.setHours(0, 0, 0, 0);
-          checkInDate.setHours(0, 0, 0, 0);
-          return now < checkInDate;
+          const checkIn = new Date(checkInDate);
+          checkIn.setHours(0, 0, 0, 0);
+          // Booking is upcoming if check-in date is in the future
+          return now < checkIn;
         }
         
-        // If no dates at all and status is confirmed, consider it upcoming
+        // For bookings without dates, if status is confirmed but not active, it's upcoming
+        if (!booking.checkIn && !booking.checkOut) {
+          return !isBookingActive(booking);
+        }
+        
+        // If no check-in date and status is confirmed, consider it upcoming
         return true;
       };
 
@@ -223,19 +256,41 @@ const HostPaymentsReceiving = () => {
           return sum + bookingTotal;
         }, 0);
 
-      // Calculate Total Earnings (Completed bookings minus admin fee)
-      // These are the actual earnings from completed bookings
+      // Calculate Total Earnings (Active/Completed bookings with payment minus admin fee)
+      // These are the actual earnings from active or completed bookings where payment was received
       // Includes:
-      // 1. Bookings with status 'completed'
-      // 2. Bookings with status 'confirmed' where checkout date has passed
+      // 1. Bookings with status 'active' AND payment completed
+      // 2. Bookings with status 'completed' AND payment completed
+      // 3. Bookings with status 'confirmed' that are active or completed AND payment completed
       // Admin fee (5%) is automatically deducted
+      // Only include bookings where payment was actually received
+      // Upcoming bookings are NOT included (they don't have earnings yet)
       let totalEarnings = 0;
       let adminFeesTotal = 0;
 
       bookings
-        .filter(b => isBookingCompleted(b))
+        .filter(b => {
+          // Booking must be active or completed (eligible for earnings)
+          if (!isBookingEligibleForEarnings(b)) {
+            return false;
+          }
+          
+          // Payment must be completed for earnings to be available
+          // Check if paymentStatus is 'completed' or paidAmount exists
+          const paymentCompleted = b.paymentStatus === 'completed' || b.paidAmount !== undefined;
+          
+          // Only include bookings where payment was received
+          return paymentCompleted;
+        })
         .forEach(b => {
-          const bookingTotal = b.total || b.totalAmount || 0;
+          // Use actual paid amount if available, otherwise use booking total
+          const bookingTotal = parseFloat(b.paidAmount || b.total || b.totalAmount || 0);
+          
+          // Skip if total is 0 or invalid
+          if (!bookingTotal || bookingTotal <= 0) {
+            return;
+          }
+          
           const { adminFee, hostEarnings } = calculateHostEarnings(bookingTotal);
           totalEarnings += hostEarnings;
           adminFeesTotal += adminFee;
@@ -299,7 +354,7 @@ const HostPaymentsReceiving = () => {
       // Calculate available balance (total earnings + credits minus cashed out amounts)
       const availableBalance = Math.max(0, totalEarnings + totalCredits - totalCashedOut);
 
-      // Calculate this month's earnings (completed)
+      // Calculate this month's earnings (active/completed with payment)
       const now = new Date();
       const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       firstDayOfMonth.setHours(0, 0, 0, 0);
@@ -307,8 +362,12 @@ const HostPaymentsReceiving = () => {
       let thisMonthEarnings = 0;
       bookings
         .filter(b => {
-          // Only include completed bookings
-          if (!isBookingCompleted(b)) return false;
+          // Only include active or completed bookings with payment
+          if (!isBookingEligibleForEarnings(b)) return false;
+          
+          // Payment must be completed
+          const paymentCompleted = b.paymentStatus === 'completed' || b.paidAmount !== undefined;
+          if (!paymentCompleted) return false;
           
           // Use checkout date if available, otherwise use check-in date
           const bookingDate = getCheckOutDate(b) || getBookingDate(b);
@@ -322,7 +381,10 @@ const HostPaymentsReceiving = () => {
           return normalizedDate >= firstDayOfMonth;
         })
         .forEach(b => {
-          const bookingTotal = b.total || b.totalAmount || 0;
+          // Use actual paid amount if available
+          const bookingTotal = parseFloat(b.paidAmount || b.total || b.totalAmount || 0);
+          if (!bookingTotal || bookingTotal <= 0) return;
+          
           const { hostEarnings } = calculateHostEarnings(bookingTotal);
           thisMonthEarnings += hostEarnings;
         });
@@ -351,9 +413,17 @@ const HostPaymentsReceiving = () => {
         });
 
       // Debug logging for earnings calculation
+      const eligibleWithPayment = bookings.filter(b => {
+        if (!isBookingEligibleForEarnings(b)) return false;
+        const paymentCompleted = b.paymentStatus === 'completed' || b.paidAmount !== undefined;
+        return paymentCompleted;
+      });
+      
       console.log('💰 Earnings Calculation:', {
         totalBookings: bookings.length,
-        completedBookings: bookings.filter(b => isBookingCompleted(b)).length,
+        activeBookings: bookings.filter(b => isBookingActive(b)).length,
+        eligibleForEarnings: bookings.filter(b => isBookingEligibleForEarnings(b)).length,
+        eligibleWithPayment: eligibleWithPayment.length,
         upcomingBookings: bookings.filter(b => isBookingUpcoming(b)).length,
         totalEarnings,
         estimatedEarnings,
@@ -364,14 +434,20 @@ const HostPaymentsReceiving = () => {
       
       // Log individual bookings for debugging
       bookings.forEach((booking, idx) => {
+        const paymentCompleted = booking.paymentStatus === 'completed' || booking.paidAmount !== undefined;
         console.log(`Booking ${idx + 1}:`, {
           id: booking.id,
           status: booking.status,
+          paymentStatus: booking.paymentStatus,
+          paidAmount: booking.paidAmount,
           total: booking.total || booking.totalAmount || 0,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
-          isCompleted: isBookingCompleted(booking),
-          isUpcoming: isBookingUpcoming(booking)
+          isActive: isBookingActive(booking),
+          isEligibleForEarnings: isBookingEligibleForEarnings(booking),
+          isUpcoming: isBookingUpcoming(booking),
+          paymentCompleted: paymentCompleted,
+          includedInEarnings: isBookingEligibleForEarnings(booking) && paymentCompleted
         });
       });
 
@@ -492,21 +568,62 @@ const HostPaymentsReceiving = () => {
         return new Date(booking.checkOut);
       };
 
-      // Helper function to check if booking is completed
-      const isBookingCompleted = (booking) => {
+      // Helper function to check if booking is active (between checkIn and checkOut)
+      const isBookingActive = (booking) => {
+        const checkInDate = getBookingDate(booking);
+        const checkOutDate = getCheckOutDate(booking);
+        
+        if (!checkInDate || !checkOutDate) {
+          // For bookings without dates (services/experiences), check status
+          if (booking.status === 'confirmed' || booking.status === 'active') {
+            return true;
+          }
+          return false;
+        }
+        
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        const checkIn = new Date(checkInDate);
+        checkIn.setHours(0, 0, 0, 0);
+        const checkOut = new Date(checkOutDate);
+        checkOut.setHours(0, 0, 0, 0);
+        
+        // Active if current date is between checkIn and checkOut (inclusive)
+        return now >= checkIn && now <= checkOut;
+      };
+
+      // Helper function to check if booking is eligible for earnings (active or completed)
+      const isBookingEligibleForEarnings = (booking) => {
+        // Explicitly completed
         if (booking.status === 'completed') {
           return true;
         }
         
+        // Active status
+        if (booking.status === 'active') {
+          return true;
+        }
+        
+        // Confirmed bookings that are active or completed
         if (booking.status === 'confirmed') {
+          // Check if booking is currently active
+          if (isBookingActive(booking)) {
+            return true;
+          }
+          
+          // Check if checkout date has passed (completed)
           const checkOutDate = getCheckOutDate(booking);
           if (checkOutDate) {
             const now = new Date();
             now.setHours(0, 0, 0, 0);
             checkOutDate.setHours(0, 0, 0, 0);
-            return now > checkOutDate;
+            // Booking is completed if checkout date has passed
+            if (now > checkOutDate) {
+              return true;
+            }
           }
           
+          // For bookings without checkout date (services/experiences), consider confirmed as eligible
           if (!booking.checkIn && !booking.checkOut) {
             return true;
           }
@@ -515,11 +632,19 @@ const HostPaymentsReceiving = () => {
         return false;
       };
 
-      // Filter completed bookings and create transaction history
+      // Filter active/completed bookings with payment and create transaction history
       const bookingTransactions = bookings
-        .filter(b => isBookingCompleted(b))
+        .filter(b => {
+          // Booking must be active or completed (eligible for earnings)
+          if (!isBookingEligibleForEarnings(b)) return false;
+          
+          // Payment must be completed for transaction to appear
+          const paymentCompleted = b.paymentStatus === 'completed' || b.paidAmount !== undefined;
+          return paymentCompleted;
+        })
         .map(booking => {
-          const bookingTotal = booking.total || booking.totalAmount || 0;
+          // Use actual paid amount if available
+          const bookingTotal = parseFloat(booking.paidAmount || booking.total || booking.totalAmount || 0);
           const { adminFee, hostEarnings } = calculateHostEarnings(bookingTotal);
           const completionDate = getCheckOutDate(booking) || getBookingDate(booking) || booking.updatedAt || booking.createdAt;
           

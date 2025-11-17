@@ -534,7 +534,7 @@ const HostEmailVerifyPage = () => {
                           onKeyDown={(e) => handleKeyDown(index, e)}
                           onPaste={index === 0 ? handlePaste : undefined}
                           disabled={status === 'verifying'}
-                          className="w-10 h-12 sm:w-12 sm:h-14 text-lg sm:text-xl font-bold border-2 border-gray-300 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                          className="w-10 h-12 sm:w-12 sm:h-14 text-lg sm:text-xl font-bold text-center border-2 border-gray-300 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
                           autoFocus={index === 0}
                         />
                       ))}

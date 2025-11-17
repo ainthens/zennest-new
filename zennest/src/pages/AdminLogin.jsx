@@ -2,6 +2,7 @@ import React, { useState, useEffect, useLayoutEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { FaShieldAlt, FaLock, FaEnvelope, FaEye, FaEyeSlash, FaExclamationCircle, FaCheckCircle } from 'react-icons/fa';
+import zennestLogo from '../assets/zennest-logo-v3.svg';
 
 /**
  * AdminLogin - Dedicated secure admin authentication portal
@@ -267,19 +268,27 @@ const AdminLogin = () => {
         {/* Logo and header */}
         <div className="text-center mb-8">
           <motion.div
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
+            initial={{ scale: 0, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
             transition={{ delay: 0.2, type: 'spring', stiffness: 200 }}
-            className="flex items-center justify-center gap-3 mb-4"
+            className="flex flex-col items-center justify-center gap-4 mb-6"
           >
-            <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-lg">
-              <FaShieldAlt className="text-white text-lg" />
+            <div className="flex items-center justify-center gap-3">
+              <img 
+                src={zennestLogo} 
+                alt="Zennest Logo" 
+                className="h-16 w-auto object-contain drop-shadow-lg"
+              />
+              <div className="text-left">
+                <h1 className="text-3xl font-bold text-white">Zennest</h1>
+                <p className="text-sm text-slate-300">Admin Portal</p>
+              </div>
             </div>
-            <h1 className="text-2xl font-bold text-white">Zennest</h1>
+            <div className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-full">
+              <FaShieldAlt className="text-emerald-400 text-sm" />
+              <span className="text-xs text-emerald-300 font-medium">Secure Administrative Access</span>
+            </div>
           </motion.div>
-
-          <h2 className="text-xl font-bold text-white mb-2">Admin Portal</h2>
-          <p className="text-slate-400 text-sm">Secure administrative access only</p>
         </div>
 
         {/* Error notification */}
