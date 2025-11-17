@@ -2,7 +2,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import SectionHeader from '../components/SectionHeader';
-import { FaBook, FaFilePdf, FaPrint, FaChevronLeft, FaChevronRight, FaFilter } from 'react-icons/fa';
+import { FaBook, FaFilePdf, FaPrint, FaChevronLeft, FaChevronRight, FaFilter, FaSync } from 'react-icons/fa';
 import { useReservationsPagination } from './useReservationsPagination';
 import ReservationRow from './ReservationRow';
 import { generatePDFReport, printReport } from '../lib/reportUtils';
@@ -10,6 +10,11 @@ import { parseDate } from '../../../utils/dateUtils';
 
 const ReservationsList = ({ showToast }) => {
   const [statusFilter, setStatusFilter] = useState('all');
+  const [dateRange, setDateRange] = useState({
+    startDate: '',
+    endDate: ''
+  });
+  const [localLoading, setLocalLoading] = useState(false);
   
   const {
     bookings,
@@ -25,6 +30,85 @@ const ReservationsList = ({ showToast }) => {
   useEffect(() => {
     reset();
   }, [reset]);
+
+  // Effect to handle date range changes and fetch data
+  useEffect(() => {
+    if (dateRange.startDate && dateRange.endDate) {
+      const start = parseDate(dateRange.startDate);
+      const end = parseDate(dateRange.endDate);
+      
+      if (start && end && start > end) {
+        showToast('End date cannot be before start date', 'error');
+        return;
+      }
+
+      // Trigger reset to fetch data with new date range
+      setLocalLoading(true);
+      reset().finally(() => {
+        setLocalLoading(false);
+      });
+    }
+  }, [dateRange.startDate, dateRange.endDate, reset, showToast]);
+
+  // Helper function to format dates
+  const formatDate = (date) => {
+    if (!date) return 'N/A';
+    const dateObj = date?.toDate ? date.toDate() : new Date(date);
+    if (isNaN(dateObj.getTime())) return 'N/A';
+    return dateObj.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric' 
+    });
+  };
+
+  // Helper function to normalize dates (remove time component)
+  const normalizeDate = (date) => {
+    const d = new Date(date);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  };
+
+  // Helper function to check if booking falls within date range
+  const isWithinDateRange = (booking) => {
+    if (!dateRange.startDate && !dateRange.endDate) return true;
+    
+    const checkIn = booking.checkIn ? normalizeDate(booking.checkIn) : null;
+    const checkOut = booking.checkOut ? normalizeDate(booking.checkOut) : null;
+    
+    if (!checkIn) return false;
+
+    const startDate = dateRange.startDate ? normalizeDate(dateRange.startDate) : null;
+    const endDate = dateRange.endDate ? normalizeDate(dateRange.endDate) : null;
+
+    // Case 1: Only start date provided - show bookings with check-in on or after start date
+    if (startDate && !endDate) {
+      return checkIn >= startDate;
+    }
+
+    // Case 2: Only end date provided - show bookings with check-out on or before end date
+    if (!startDate && endDate) {
+      const bookingEndDate = checkOut || checkIn;
+      return bookingEndDate <= endDate;
+    }
+
+    // Case 3: Both dates provided - show bookings that overlap with the date range
+    if (startDate && endDate) {
+      const bookingEndDate = checkOut || checkIn;
+      
+      // Check if booking overlaps with the date range
+      // Booking overlaps if:
+      // - Check-in is within the range OR
+      // - Check-out is within the range OR  
+      // - Booking spans the entire range (check-in before start and check-out after end)
+      return (
+        (checkIn >= startDate && checkIn <= endDate) || // Check-in within range
+        (bookingEndDate >= startDate && bookingEndDate <= endDate) || // Check-out within range
+        (checkIn <= startDate && bookingEndDate >= endDate) // Booking spans entire range
+      );
+    }
+
+    return true;
+  };
 
   // Helper function to determine booking status
   const getBookingStatus = (booking) => {
@@ -77,23 +161,30 @@ const ReservationsList = ({ showToast }) => {
     return booking.paymentStatus || 'pending';
   };
 
-  // Filter bookings based on selected status (considering both booking and payment status)
+  // Filter bookings based on selected status and date range
   const filteredBookings = useMemo(() => {
-    if (statusFilter === 'all') return bookings;
-    
-    return bookings.filter(booking => {
-      const bookingStatus = getBookingStatus(booking);
-      const paymentStatus = getPaymentStatus(booking);
-      
-      // For "upcoming" filter: booking must be upcoming AND payment should be upcoming/pending (not completed)
+    let filtered = [...bookings];
+
+    // Filter by status
+    if (statusFilter !== 'all') {
       if (statusFilter === 'upcoming') {
-        return bookingStatus === 'upcoming' && paymentStatus !== 'completed';
+        filtered = filtered.filter(booking => {
+          const bookingStatus = getBookingStatus(booking);
+          const paymentStatus = getPaymentStatus(booking);
+          return bookingStatus === 'upcoming' && paymentStatus !== 'completed';
+        });
+      } else {
+        filtered = filtered.filter(booking => getBookingStatus(booking) === statusFilter);
       }
-      
-      // For other filters, match the booking status
-      return bookingStatus === statusFilter;
-    });
-  }, [bookings, statusFilter]);
+    }
+
+    // Filter by date range
+    if (dateRange.startDate || dateRange.endDate) {
+      filtered = filtered.filter(booking => isWithinDateRange(booking));
+    }
+
+    return filtered;
+  }, [bookings, statusFilter, dateRange]);
 
   const handleExportPDF = () => {
     try {
@@ -108,23 +199,15 @@ const ReservationsList = ({ showToast }) => {
         { key: 'createdAt', label: 'Created At', width: 1.3 }
       ];
 
-      // Helper function to format dates properly
-      const formatDate = (date) => {
-        if (!date) return 'N/A';
-        const dateObj = date?.toDate ? date.toDate() : new Date(date);
-        if (isNaN(dateObj.getTime())) return 'N/A';
-        return dateObj.toLocaleDateString('en-US', { 
-          year: 'numeric', 
-          month: 'short', 
-          day: 'numeric' 
-        });
-      };
-
       // Helper function to capitalize status
       const capitalizeStatus = (status) => {
         if (!status || status === 'N/A') return 'N/A';
         return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
       };
+
+      const dateRangeLabel = dateRange.startDate || dateRange.endDate ? 
+        ` (${dateRange.startDate ? formatDate(dateRange.startDate) : 'Any'} to ${dateRange.endDate ? formatDate(dateRange.endDate) : 'Any'})` : 
+        '';
 
       const rows = filteredBookings.map(b => {
         const paymentStatus = getPaymentStatus(b);
@@ -149,12 +232,13 @@ const ReservationsList = ({ showToast }) => {
 
       generatePDFReport({
         type: 'reservations',
-        title: filterLabel,
+        title: `${filterLabel}${dateRangeLabel}`,
         rows,
         columns,
         meta: {
           generatedBy: 'Admin Dashboard',
           filter: filterLabel,
+          dateRange: dateRangeLabel,
           totalRecords: filteredBookings.length
         }
       });
@@ -175,10 +259,15 @@ const ReservationsList = ({ showToast }) => {
                           statusFilter === 'cancelled' ? 'Cancelled Reservations' :
                           `${statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)} Reservations`;
 
+      const dateRangeLabel = dateRange.startDate || dateRange.endDate ? 
+        ` (${dateRange.startDate ? formatDate(dateRange.startDate) : 'Any'} to ${dateRange.endDate ? formatDate(dateRange.endDate) : 'Any'})` : 
+        '';
+
       const htmlContent = `
         <div style="margin-bottom: 20px;">
-          <h2 style="margin: 0; font-size: 24px; font-weight: bold;">${filterLabel}</h2>
+          <h2 style="margin: 0; font-size: 24px; font-weight: bold;">${filterLabel}${dateRangeLabel}</h2>
           <p style="margin: 5px 0; color: #666;">Total Records: ${filteredBookings.length}</p>
+          <p style="margin: 5px 0; color: #666;">Date Range: ${dateRange.startDate ? formatDate(dateRange.startDate) : 'Any'} to ${dateRange.endDate ? formatDate(dateRange.endDate) : 'Any'}</p>
           <p style="margin: 5px 0; color: #666;">Generated: ${new Date().toLocaleString()}</p>
         </div>
         <table style="width: 100%; border-collapse: collapse;">
@@ -205,11 +294,11 @@ const ReservationsList = ({ showToast }) => {
                   ${b.guestEmail ? `<br><small style="color: #666;">${b.guestEmail}</small>` : ''}
                 </td>
                 <td style="padding: 10px; border: 1px solid #ddd;">${b.listingTitle || 'Unknown'}</td>
-                <td style="padding: 10px; border: 1px solid #ddd;">${b.checkIn?.toDate ? b.checkIn.toDate().toLocaleDateString() : 'N/A'}</td>
-                <td style="padding: 10px; border: 1px solid #ddd;">${b.checkOut?.toDate ? b.checkOut.toDate().toLocaleDateString() : 'N/A'}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">${formatDate(b.checkIn)}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">${formatDate(b.checkOut)}</td>
                 <td style="padding: 10px; border: 1px solid #ddd;">${b.status || 'N/A'}</td>
                 <td style="padding: 10px; border: 1px solid #ddd;">${paymentStatus || 'N/A'}</td>
-                <td style="padding: 10px; border: 1px solid #ddd;">${b.createdAt?.toDate ? b.createdAt.toDate().toLocaleDateString() : 'N/A'}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">${formatDate(b.createdAt)}</td>
               </tr>
             `;
             }).join('')}
@@ -218,7 +307,7 @@ const ReservationsList = ({ showToast }) => {
       `;
 
       printReport({
-        title: filterLabel,
+        title: `${filterLabel}${dateRangeLabel}`,
         htmlContent
       });
     } catch (error) {
@@ -226,6 +315,23 @@ const ReservationsList = ({ showToast }) => {
       showToast('Failed to print report', 'error');
     }
   };
+
+  const clearDateRange = () => {
+    setDateRange({ startDate: '', endDate: '' });
+    setLocalLoading(true);
+    reset().finally(() => {
+      setLocalLoading(false);
+    });
+  };
+
+  const handleDateChange = (type, value) => {
+    setDateRange(prev => ({
+      ...prev,
+      [type]: value
+    }));
+  };
+
+  const isFetching = loading || localLoading;
 
   return (
     <motion.div
@@ -245,7 +351,8 @@ const ReservationsList = ({ showToast }) => {
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={handleExportPDF}
-            className="px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-xs sm:text-sm flex items-center gap-2"
+            disabled={isFetching}
+            className="px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-xs sm:text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FaFilePdf className="text-xs sm:text-sm" />
             <span className="hidden sm:inline">Export PDF</span>
@@ -255,7 +362,8 @@ const ReservationsList = ({ showToast }) => {
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={handlePrint}
-            className="px-3 sm:px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors font-semibold text-xs sm:text-sm flex items-center gap-2"
+            disabled={isFetching}
+            className="px-3 sm:px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors font-semibold text-xs sm:text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FaPrint className="text-xs sm:text-sm" />
             <span className="hidden sm:inline">Print</span>
@@ -266,24 +374,65 @@ const ReservationsList = ({ showToast }) => {
 
       {/* Filter Section */}
       <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6 border border-gray-100">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
-          <div className="flex items-center gap-2">
-            <FaFilter className="text-gray-600 text-sm" />
-            <label className="text-xs sm:text-sm font-medium text-gray-700">Filter by Status:</label>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Status Filter */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-2">Filter by Status</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              disabled={isFetching}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="all">All Reservations</option>
+              <option value="upcoming">Upcoming (with pending payment)</option>
+              <option value="active">Active</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="pending_approval">Pending Approval</option>
+              <option value="rejected">Rejected</option>
+            </select>
           </div>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-xs sm:text-sm font-medium"
-          >
-            <option value="all">All Reservations</option>
-            <option value="upcoming">Upcoming (with pending payment)</option>
-            <option value="active">Active</option>
-            <option value="completed">Completed</option>
-            <option value="cancelled">Cancelled</option>
-            <option value="pending_approval">Pending Approval</option>
-            <option value="rejected">Rejected</option>
-          </select>
+
+          {/* Date Range Filter */}
+          <div className="lg:col-span-2">
+            <label className="block text-xs font-semibold text-gray-700 mb-2">Date Range</label>
+            <div className="flex gap-2 items-end">
+              <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  type="date"
+                  value={dateRange.startDate}
+                  onChange={(e) => handleDateChange('startDate', e.target.value)}
+                  disabled={isFetching}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  placeholder="Start date"
+                />
+                <input
+                  type="date"
+                  value={dateRange.endDate}
+                  onChange={(e) => handleDateChange('endDate', e.target.value)}
+                  disabled={isFetching}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  placeholder="End date"
+                />
+              </div>
+              {(dateRange.startDate || dateRange.endDate) && (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={clearDateRange}
+                  disabled={isFetching}
+                  className="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-semibold text-xs sm:text-sm whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Clear Dates
+                </motion.button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Active Filters Info */}
+        <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="text-xs sm:text-sm text-gray-600">
             Showing {filteredBookings.length} of {bookings.length} reservation{bookings.length !== 1 ? 's' : ''}
             {statusFilter === 'upcoming' && (
@@ -292,6 +441,15 @@ const ReservationsList = ({ showToast }) => {
               </span>
             )}
           </div>
+          
+          {(dateRange.startDate || dateRange.endDate) && (
+            <div className="p-2 bg-blue-50 rounded-lg">
+              <p className="text-xs text-blue-700 flex items-center gap-2">
+                {isFetching && <FaSync className="animate-spin" />}
+                Showing bookings from <strong>{dateRange.startDate ? formatDate(dateRange.startDate) : 'any date'}</strong> to <strong>{dateRange.endDate ? formatDate(dateRange.endDate) : 'any date'}</strong>
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -306,7 +464,7 @@ const ReservationsList = ({ showToast }) => {
           </div>
         )}
 
-        {loading && bookings.length === 0 ? (
+        {isFetching && bookings.length === 0 ? (
           <div className="p-6 sm:p-8 text-center">
             <div className="animate-spin rounded-full h-6 w-6 sm:h-8 sm:w-8 border-b-2 border-emerald-600 mx-auto mb-2"></div>
             <p className="text-xs sm:text-sm text-gray-600">Loading reservations...</p>
@@ -329,15 +487,16 @@ const ReservationsList = ({ showToast }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                          {filteredBookings.length === 0 ? (
-                            <tr>
-                              <td colSpan="9" className="px-3 sm:px-6 py-6 sm:py-8 text-center text-gray-500 text-xs sm:text-sm">
-                                {bookings.length === 0 
-                                  ? 'No reservations found' 
-                                  : `No ${statusFilter === 'all' ? '' : statusFilter === 'upcoming' ? 'upcoming (with pending payment) ' : statusFilter.replace('_', ' ')} reservations found`}
-                              </td>
-                            </tr>
-                          ) : (
+                  {filteredBookings.length === 0 ? (
+                    <tr>
+                      <td colSpan="9" className="px-3 sm:px-6 py-6 sm:py-8 text-center text-gray-500 text-xs sm:text-sm">
+                        {bookings.length === 0 
+                          ? 'No reservations found' 
+                          : `No ${statusFilter === 'all' ? '' : statusFilter === 'upcoming' ? 'upcoming (with pending payment) ' : statusFilter.replace('_', ' ')} reservations found`}
+                        {dateRange.startDate || dateRange.endDate ? ' for the selected date range' : ''}
+                      </td>
+                    </tr>
+                  ) : (
                     filteredBookings.map((booking) => (
                       <ReservationRow key={booking.id} booking={booking} />
                     ))
@@ -356,7 +515,7 @@ const ReservationsList = ({ showToast }) => {
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={fetchPrevious}
-                  disabled={page === 0 || loading}
+                  disabled={page === 0 || isFetching}
                   className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <FaChevronLeft className="text-xs" />
@@ -367,7 +526,7 @@ const ReservationsList = ({ showToast }) => {
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={fetchNext}
-                  disabled={!hasMore || loading}
+                  disabled={!hasMore || isFetching}
                   className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <span className="hidden sm:inline">Next</span>
@@ -384,4 +543,3 @@ const ReservationsList = ({ showToast }) => {
 };
 
 export default ReservationsList;
-

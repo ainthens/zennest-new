@@ -9,22 +9,71 @@ import { parseDate } from '../../../utils/dateUtils';
 const RecentBookingsList = ({ bookings, showToast }) => {
   const [statusFilter, setStatusFilter] = useState('all');
 
-  // Helper function to format dates
+  // NEW: Date range filter states
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
+  // Helper: robust date parser that falls back to multiple formats
+  const toDate = (value) => {
+    if (!value) return null;
+
+    // If it's already a Date
+    if (value instanceof Date && !isNaN(value)) return value;
+
+    // Try user's parseDate utility first
+    try {
+      const parsed = parseDate(value);
+      if (parsed instanceof Date && !isNaN(parsed)) return parsed;
+    } catch (e) {
+      // ignore and try next
+    }
+
+    // Try ISO / standard parsing
+    const d1 = new Date(value);
+    if (!isNaN(d1)) return d1;
+
+    // Try dd/mm/yyyy (common localized format shown in screenshot)
+    const ddmmyyyy = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/;
+    const m = String(value).trim().match(ddmmyyyy);
+    if (m) {
+      const day = parseInt(m[1], 10);
+      const month = parseInt(m[2], 10) - 1;
+      const year = parseInt(m[3], 10);
+      const d2 = new Date(year, month, day);
+      if (!isNaN(d2)) return d2;
+    }
+
+    return null;
+  };
+
+  // Normalize to start of day (00:00:00) or end of day (23:59:59)
+  const startOfDay = (d) => {
+    const dt = new Date(d);
+    dt.setHours(0, 0, 0, 0);
+    return dt;
+  };
+  const endOfDay = (d) => {
+    const dt = new Date(d);
+    dt.setHours(23, 59, 59, 999);
+    return dt;
+  };
+
+  // Format dates for display
   const formatDate = (date) => {
     if (!date) return 'N/A';
-    const dateObj = parseDate(date);
+    const dateObj = toDate(date);
     if (!dateObj) return 'N/A';
-    return dateObj.toLocaleDateString('en-US', { 
-      year: 'numeric', 
-      month: 'short', 
-      day: 'numeric' 
+    return dateObj.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
     });
   };
 
-  // Helper function to check if booking is upcoming
+  // Check if booking is upcoming
   const isUpcoming = (booking) => {
-    if (!booking.checkIn) return false;
-    const checkInDate = parseDate(booking.checkIn);
+    if (!booking?.checkIn) return false;
+    const checkInDate = toDate(booking.checkIn);
     if (!checkInDate) return false;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -32,36 +81,77 @@ const RecentBookingsList = ({ bookings, showToast }) => {
     return checkInOnly > today && (booking.status === 'confirmed' || booking.status === 'pending' || booking.status === 'pending_approval');
   };
 
-  // Filter bookings by status
+  // MAIN FILTERING LOGIC (Status + Date Range) — now uses overlap logic
   const filteredBookings = useMemo(() => {
-    let filtered = [...bookings];
+    let filtered = Array.isArray(bookings) ? [...bookings] : [];
 
-    // Filter by status
+    // --- Status Filter ---
     if (statusFilter !== 'all') {
       if (statusFilter === 'upcoming') {
         filtered = filtered.filter(booking => isUpcoming(booking));
       } else {
-        filtered = filtered.filter(booking => booking.status === statusFilter);
+        filtered = filtered.filter(booking => booking?.status === statusFilter);
       }
     }
 
-    // Sort by most recent first
+    // --- Date Range Filter ---
+    if (startDate || endDate) {
+      const start = startDate ? startOfDay(toDate(startDate)) : null;
+      const end = endDate ? endOfDay(toDate(endDate)) : null;
+
+      filtered = filtered.filter((booking) => {
+        const rawCheckIn = booking?.checkIn;
+        const rawCheckOut = booking?.checkOut;
+
+        const checkIn = rawCheckIn ? startOfDay(toDate(rawCheckIn)) : null;
+        const checkOut = rawCheckOut ? endOfDay(toDate(rawCheckOut)) : null;
+
+        // If we can't parse check-in at all, exclude it
+        if (!checkIn) return false;
+
+        // If only start specified: include when booking.checkIn >= start OR booking.checkOut >= start (booking starts after or ends after)
+        if (start && !end) {
+          // booking that starts on or after start OR booking that is ongoing and ends after start
+          return checkIn >= start || (checkOut && checkOut >= start);
+        }
+
+        // If only end specified: include when booking.checkIn <= end (booking starts on or before end)
+        if (!start && end) {
+          return checkIn <= end;
+        }
+
+        // If both start and end specified: include bookings that overlap the [start, end] range
+        if (start && end) {
+          // Overlap condition: booking.start <= rangeEnd && booking.end >= rangeStart
+          // If booking has no checkOut, treat it as same-day booking (use checkIn)
+          const bookingEnd = checkOut || checkIn;
+          return (checkIn <= end) && (bookingEnd >= start);
+        }
+
+        // default include
+        return true;
+      });
+    }
+
+    // --- Sort (Newest First) ---
     return filtered.sort((a, b) => {
-      const dateA = parseDate(a.createdAt || a.checkIn);
-      const dateB = parseDate(b.createdAt || b.checkIn);
+      const dateA = toDate(a.createdAt || a.checkIn);
+      const dateB = toDate(b.createdAt || b.checkIn);
       if (!dateA || !dateB) return 0;
       return dateB.getTime() - dateA.getTime();
     });
-  }, [bookings, statusFilter]);
+  }, [bookings, statusFilter, startDate, endDate]); // re-run when these change
 
+  // Export PDF
   const handleExportPDF = () => {
     try {
-      const filterLabel = statusFilter === 'all' ? 'All Bookings' : 
-                          statusFilter === 'completed' ? 'Completed Bookings' :
-                          statusFilter === 'cancelled' ? 'Cancelled Bookings' :
-                          statusFilter === 'pending' ? 'Pending Bookings' :
-                          statusFilter === 'upcoming' ? 'Upcoming Bookings' :
-                          `${statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)} Bookings`;
+      const filterLabel =
+        statusFilter === 'all' ? 'All Bookings' :
+        statusFilter === 'completed' ? 'Completed Bookings' :
+        statusFilter === 'cancelled' ? 'Cancelled Bookings' :
+        statusFilter === 'pending' ? 'Pending Bookings' :
+        statusFilter === 'upcoming' ? 'Upcoming Bookings' :
+        `${statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)} Bookings`;
 
       const columns = [
         { key: 'bookingId', label: 'Booking ID', width: 1.2 },
@@ -106,14 +196,16 @@ const RecentBookingsList = ({ bookings, showToast }) => {
     }
   };
 
+  // Print Logic
   const handlePrint = () => {
     try {
-      const filterLabel = statusFilter === 'all' ? 'All Bookings' : 
-                          statusFilter === 'completed' ? 'Completed Bookings' :
-                          statusFilter === 'cancelled' ? 'Cancelled Bookings' :
-                          statusFilter === 'pending' ? 'Pending Bookings' :
-                          statusFilter === 'upcoming' ? 'Upcoming Bookings' :
-                          `${statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)} Bookings`;
+      const filterLabel =
+        statusFilter === 'all' ? 'All Bookings' :
+        statusFilter === 'completed' ? 'Completed Bookings' :
+        statusFilter === 'cancelled' ? 'Cancelled Bookings' :
+        statusFilter === 'pending' ? 'Pending Bookings' :
+        statusFilter === 'upcoming' ? 'Upcoming Bookings' :
+        `${statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)} Bookings`;
 
       const htmlContent = `
         <div style="margin-bottom: 20px;">
@@ -181,6 +273,7 @@ const RecentBookingsList = ({ bookings, showToast }) => {
               <span className="hidden sm:inline">Export PDF</span>
               <span className="sm:hidden">PDF</span>
             </motion.button>
+
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
@@ -194,8 +287,10 @@ const RecentBookingsList = ({ bookings, showToast }) => {
           </div>
         </div>
 
-        {/* Status Filter */}
+        {/* Filters */}
         <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-end">
+
+          {/* Status Filter */}
           <div className="flex-1 min-w-full sm:min-w-[200px]">
             <label className="block text-xs font-semibold text-gray-700 mb-1">Filter by Status</label>
             <select
@@ -213,8 +308,33 @@ const RecentBookingsList = ({ bookings, showToast }) => {
             </select>
           </div>
         </div>
+
+        {/* NEW: Date Range Filter */}
+        <div className="flex flex-col sm:flex-row gap-3 mt-3">
+          <div className="flex-1">
+            <label className="block text-xs font-semibold text-gray-700 mb-1">Start Date (Check-in)</label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600"
+            />
+          </div>
+
+          <div className="flex-1">
+            <label className="block text-xs font-semibold text-gray-700 mb-1">End Date (Check-out)</label>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600"
+            />
+          </div>
+        </div>
+
       </div>
 
+      {/* TABLE */}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[900px]">
           <thead className="bg-gray-50">
@@ -232,7 +352,9 @@ const RecentBookingsList = ({ bookings, showToast }) => {
             {filteredBookings.length === 0 ? (
               <tr>
                 <td colSpan="7" className="px-3 sm:px-6 py-6 sm:py-8 text-center text-gray-500 text-xs sm:text-sm">
-                  No bookings found {statusFilter !== 'all' ? `with status "${statusFilter}"` : ''}
+                  No bookings found
+                  {statusFilter !== 'all' ? ` with status "${statusFilter}"` : ''}
+                  {(startDate || endDate) ? ' in selected date range' : ''}
                 </td>
               </tr>
             ) : (
@@ -243,6 +365,7 @@ const RecentBookingsList = ({ bookings, showToast }) => {
                     <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900">
                       {booking.id?.substring(0, 8) || 'N/A'}
                     </td>
+
                     <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm">
                       <div>
                         <div className="font-medium text-gray-900">{guestName}</div>
@@ -251,27 +374,42 @@ const RecentBookingsList = ({ bookings, showToast }) => {
                         )}
                       </div>
                     </td>
+
                     <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 hidden md:table-cell">
                       {booking.listingTitle || 'Unknown'}
                     </td>
+
                     <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm text-gray-600">
                       {formatDate(booking.checkIn)}
                     </td>
+
                     <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 hidden lg:table-cell">
                       {formatDate(booking.checkOut)}
                     </td>
+
                     <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm">
-                      <span className={`px-2 sm:px-3 py-1 rounded-full text-xs font-semibold ${
-                        booking.status === 'completed' ? 'bg-green-100 text-green-800' :
-                        booking.status === 'confirmed' ? 'bg-blue-100 text-blue-800' :
-                        booking.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-                        booking.status === 'pending' || booking.status === 'pending_approval' ? 'bg-yellow-100 text-yellow-800' :
-                        booking.status === 'active' ? 'bg-purple-100 text-purple-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>
-                        {booking.status ? booking.status.charAt(0).toUpperCase() + booking.status.slice(1).replace('_', ' ') : 'N/A'}
+                      <span
+                        className={`px-2 sm:px-3 py-1 rounded-full text-xs font-semibold ${
+                          booking.status === 'completed'
+                            ? 'bg-green-100 text-green-800'
+                            : booking.status === 'confirmed'
+                            ? 'bg-blue-100 text-blue-800'
+                            : booking.status === 'cancelled'
+                            ? 'bg-red-100 text-red-800'
+                            : booking.status === 'pending' || booking.status === 'pending_approval'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : booking.status === 'active'
+                            ? 'bg-purple-100 text-purple-800'
+                            : 'bg-gray-100 text-gray-800'
+                        }`}
+                      >
+                        {booking.status
+                          ? booking.status.charAt(0).toUpperCase() +
+                            booking.status.slice(1).replace('_', ' ')
+                          : 'N/A'}
                       </span>
                     </td>
+
                     <td className="px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-semibold text-emerald-700">
                       ₱{(booking.total || booking.totalAmount || 0).toLocaleString()}
                     </td>
@@ -287,4 +425,3 @@ const RecentBookingsList = ({ bookings, showToast }) => {
 };
 
 export default RecentBookingsList;
-

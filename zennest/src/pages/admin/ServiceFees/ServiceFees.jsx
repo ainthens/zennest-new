@@ -2,13 +2,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SectionHeader from '../components/SectionHeader';
-import { FaDollarSign, FaFilePdf, FaPrint, FaWallet, FaPaypal, FaSpinner, FaCheckCircle, FaExclamationCircle, FaTimes, FaMoneyBillWave } from 'react-icons/fa';
+import { FaDollarSign, FaFilePdf, FaPrint, FaWallet, FaPaypal, FaSpinner, FaCheckCircle, FaExclamationCircle, FaTimes, FaMoneyBillWave, FaSync } from 'react-icons/fa';
 import { fetchTransactions, calculateAdminBalanceFromTransactions } from '../lib/dataFetchers';
 import { generatePDFReport, printReport } from '../lib/reportUtils';
 import CashoutModal from './CashoutModal';
 import TransactionRow from './TransactionRow';
 import { collection, addDoc, serverTimestamp, doc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
+import { parseDate } from '../../../utils/dateUtils';
 
 const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
   const [transactions, setTransactions] = useState([]);
@@ -18,15 +19,18 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
   const [showWithdrawalSuccessModal, setShowWithdrawalSuccessModal] = useState(false);
   const [withdrawalDetails, setWithdrawalDetails] = useState(null);
   const [processingCashOut, setProcessingCashOut] = useState(false);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [dateRange, setDateRange] = useState({
+    startDate: '',
+    endDate: ''
+  });
   const [statusFilter, setStatusFilter] = useState('all');
   const [hostFilter, setHostFilter] = useState('');
+  const [localLoading, setLocalLoading] = useState(false);
 
   useEffect(() => {
     loadTransactions();
     calculateBalance();
-  }, [dateFrom, dateTo, statusFilter, hostFilter, adminFeePercentage]);
+  }, [dateRange.startDate, dateRange.endDate, statusFilter, hostFilter, adminFeePercentage]);
 
   const calculateBalance = async () => {
     try {
@@ -39,21 +43,64 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
     }
   };
 
+  // Helper function to normalize dates (remove time component)
+  const normalizeDate = (date) => {
+    if (!date) return null;
+    const d = new Date(date);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  };
+
+  // Helper function to check if transaction falls within date range
+  const isWithinDateRange = (transaction) => {
+    if (!dateRange.startDate && !dateRange.endDate) return true;
+    
+    const transactionDate = transaction.date ? normalizeDate(transaction.date) : null;
+    if (!transactionDate) return false;
+
+    const startDate = dateRange.startDate ? normalizeDate(dateRange.startDate) : null;
+    const endDate = dateRange.endDate ? normalizeDate(dateRange.endDate) : null;
+
+    // Case 1: Only start date provided - show transactions on or after start date
+    if (startDate && !endDate) {
+      return transactionDate >= startDate;
+    }
+
+    // Case 2: Only end date provided - show transactions on or before end date
+    if (!startDate && endDate) {
+      return transactionDate <= endDate;
+    }
+
+    // Case 3: Both dates provided - show transactions within the range
+    if (startDate && endDate) {
+      return transactionDate >= startDate && transactionDate <= endDate;
+    }
+
+    return true;
+  };
+
   const loadTransactions = async () => {
-    setLoading(true);
+    setLocalLoading(true);
     try {
       const data = await fetchTransactions({
-        dateFrom: dateFrom || null,
-        dateTo: dateTo || null,
+        dateFrom: dateRange.startDate || null,
+        dateTo: dateRange.endDate || null,
         status: statusFilter !== 'all' ? statusFilter : null,
         hostId: hostFilter || null,
         adminFeePercentage: adminFeePercentage || null
       });
-      setTransactions(data);
+      
+      // Apply client-side date range filtering for accuracy
+      let filteredData = data;
+      if (dateRange.startDate || dateRange.endDate) {
+        filteredData = data.filter(transaction => isWithinDateRange(transaction));
+      }
+      
+      setTransactions(filteredData);
     } catch (error) {
       console.error('Error loading transactions:', error);
       showToast('Failed to load transactions', 'error');
     } finally {
+      setLocalLoading(false);
       setLoading(false);
     }
   };
@@ -281,6 +328,10 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
         { key: 'status', label: 'Status', width: 1 }
       ];
 
+      const dateRangeLabel = dateRange.startDate || dateRange.endDate ? 
+        ` (${dateRange.startDate ? new Date(dateRange.startDate).toLocaleDateString() : 'Any'} to ${dateRange.endDate ? new Date(dateRange.endDate).toLocaleDateString() : 'Any'})` : 
+        '';
+
       const rows = transactions.map(t => ({
         date: t.date ? new Date(t.date).toLocaleDateString() : 'N/A',
         bookingId: t.bookingId?.substring(0, 8) || 'N/A',
@@ -294,13 +345,14 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
 
       generatePDFReport({
         type: 'service-fees',
-        title: 'Service Fees Report',
+        title: `Service Fees Report${dateRangeLabel}`,
         rows,
         columns,
         meta: {
-          dateFrom,
-          dateTo,
-          generatedBy: 'Admin Dashboard'
+          dateFrom: dateRange.startDate,
+          dateTo: dateRange.endDate,
+          generatedBy: 'Admin Dashboard',
+          totalRecords: transactions.length
         }
       });
 
@@ -313,31 +365,41 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
 
   const handlePrint = () => {
     try {
+      const dateRangeLabel = dateRange.startDate || dateRange.endDate ? 
+        ` (${dateRange.startDate ? new Date(dateRange.startDate).toLocaleDateString() : 'Any'} to ${dateRange.endDate ? new Date(dateRange.endDate).toLocaleDateString() : 'Any'})` : 
+        '';
+
       const htmlContent = `
-        <table>
+        <div style="margin-bottom: 20px;">
+          <h2 style="margin: 0; font-size: 24px; font-weight: bold;">Service Fees Report${dateRangeLabel}</h2>
+          <p style="margin: 5px 0; color: #666;">Total Records: ${transactions.length}</p>
+          <p style="margin: 5px 0; color: #666;">Date Range: ${dateRange.startDate ? new Date(dateRange.startDate).toLocaleDateString() : 'Any'} to ${dateRange.endDate ? new Date(dateRange.endDate).toLocaleDateString() : 'Any'}</p>
+          <p style="margin: 5px 0; color: #666;">Generated: ${new Date().toLocaleString()}</p>
+        </div>
+        <table style="width: 100%; border-collapse: collapse;">
           <thead>
-            <tr>
-              <th>Date</th>
-              <th>Booking ID</th>
-              <th>Guest</th>
-              <th>Host</th>
-              <th>Subtotal</th>
-              <th>Admin Fee</th>
-              <th>Host Payout</th>
-              <th>Status</th>
+            <tr style="background-color: #f3f4f6;">
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Date</th>
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Booking ID</th>
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Guest</th>
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Host</th>
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Subtotal</th>
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Admin Fee</th>
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Host Payout</th>
+              <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Status</th>
             </tr>
           </thead>
           <tbody>
             ${transactions.map(t => `
               <tr>
-                <td>${t.date ? new Date(t.date).toLocaleDateString() : 'N/A'}</td>
-                <td>${t.bookingId?.substring(0, 8) || 'N/A'}</td>
-                <td>${t.guestName || 'Guest'}</td>
-                <td>${t.hostName || 'Host'}</td>
-                <td>₱${(t.subtotal || 0).toLocaleString()}</td>
-                <td>₱${(t.adminFee || 0).toLocaleString()}</td>
-                <td>₱${(t.hostPayout || 0).toLocaleString()}</td>
-                <td>${t.status || 'N/A'}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">${t.date ? new Date(t.date).toLocaleDateString() : 'N/A'}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">${t.bookingId?.substring(0, 8) || 'N/A'}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">${t.guestName || 'Guest'}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">${t.hostName || 'Host'}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">₱${(t.subtotal || 0).toLocaleString()}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">₱${(t.adminFee || 0).toLocaleString()}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">₱${(t.hostPayout || 0).toLocaleString()}</td>
+                <td style="padding: 10px; border: 1px solid #ddd;">${t.status || 'N/A'}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -345,7 +407,7 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
       `;
 
       printReport({
-        title: 'Service Fees Report',
+        title: `Service Fees Report${dateRangeLabel}`,
         htmlContent
       });
     } catch (error) {
@@ -353,6 +415,19 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
       showToast('Failed to print report', 'error');
     }
   };
+
+  const clearDateRange = () => {
+    setDateRange({ startDate: '', endDate: '' });
+  };
+
+  const handleDateChange = (type, value) => {
+    setDateRange(prev => ({
+      ...prev,
+      [type]: value
+    }));
+  };
+
+  const isFetching = loading || localLoading;
 
   return (
     <motion.div
@@ -394,31 +469,51 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
 
       {/* Filters */}
       <div className="bg-white rounded-xl shadow-sm p-4 sm:p-6 border border-gray-100">
-        <div className="flex flex-col sm:flex-row sm:flex-wrap gap-4 items-stretch sm:items-end">
-          <div className="flex-1 min-w-full sm:min-w-[150px]">
-            <label className="block text-xs font-semibold text-gray-700 mb-1">Start Date</label>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600"
-            />
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+          {/* Date Range Filter */}
+          <div className="lg:col-span-2">
+            <label className="block text-xs font-semibold text-gray-700 mb-2">Date Range</label>
+            <div className="flex gap-2 items-end">
+              <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  type="date"
+                  value={dateRange.startDate}
+                  onChange={(e) => handleDateChange('startDate', e.target.value)}
+                  disabled={isFetching}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  placeholder="Start date"
+                />
+                <input
+                  type="date"
+                  value={dateRange.endDate}
+                  onChange={(e) => handleDateChange('endDate', e.target.value)}
+                  disabled={isFetching}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  placeholder="End date"
+                />
+              </div>
+              {(dateRange.startDate || dateRange.endDate) && (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={clearDateRange}
+                  disabled={isFetching}
+                  className="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-semibold text-xs sm:text-sm whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Clear Dates
+                </motion.button>
+              )}
+            </div>
           </div>
-          <div className="flex-1 min-w-full sm:min-w-[150px]">
-            <label className="block text-xs font-semibold text-gray-700 mb-1">End Date</label>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600"
-            />
-          </div>
-          <div className="min-w-full sm:min-w-[150px]">
-            <label className="block text-xs font-semibold text-gray-700 mb-1">Status</label>
+
+          {/* Status Filter */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-2">Status</label>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600"
+              disabled={isFetching}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <option value="all">All</option>
               <option value="completed">Completed</option>
@@ -426,12 +521,15 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
               <option value="refunded">Refunded</option>
             </select>
           </div>
-          <div className="flex gap-2 flex-wrap">
+
+          {/* Export/Print Buttons */}
+          <div className="flex gap-2 items-end">
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleExportPDF}
-              className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-xs sm:text-sm flex items-center justify-center gap-2"
+              disabled={isFetching}
+              className="flex-1 px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <FaFilePdf className="text-xs sm:text-sm" />
               <span className="hidden sm:inline">Export PDF</span>
@@ -441,7 +539,8 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handlePrint}
-              className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors font-semibold text-xs sm:text-sm flex items-center justify-center gap-2"
+              disabled={isFetching}
+              className="flex-1 px-3 sm:px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <FaPrint className="text-xs sm:text-sm" />
               <span className="hidden sm:inline">Print</span>
@@ -449,6 +548,16 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
             </motion.button>
           </div>
         </div>
+
+        {/* Active Filters Info */}
+        {(dateRange.startDate || dateRange.endDate) && (
+          <div className="mt-4 p-2 bg-blue-50 rounded-lg">
+            <p className="text-xs text-blue-700 flex items-center gap-2">
+              {isFetching && <FaSync className="animate-spin" />}
+              Showing transactions from <strong>{dateRange.startDate ? new Date(dateRange.startDate).toLocaleDateString() : 'any date'}</strong> to <strong>{dateRange.endDate ? new Date(dateRange.endDate).toLocaleDateString() : 'any date'}</strong>
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Transactions Table */}
@@ -471,7 +580,7 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {loading ? (
+              {isFetching ? (
                 <tr>
                   <td colSpan="8" className="px-3 sm:px-6 py-6 sm:py-8 text-center">
                     <div className="animate-spin rounded-full h-6 w-6 sm:h-8 sm:w-8 border-b-2 border-emerald-600 mx-auto mb-2"></div>
@@ -482,6 +591,7 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
                 <tr>
                   <td colSpan="8" className="px-3 sm:px-6 py-6 sm:py-8 text-center text-gray-500 text-xs sm:text-sm">
                     No transactions found
+                    {(dateRange.startDate || dateRange.endDate || statusFilter !== 'all') && ' with current filters'}
                   </td>
                 </tr>
               ) : (
@@ -619,4 +729,3 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
 };
 
 export default ServiceFees;
-
