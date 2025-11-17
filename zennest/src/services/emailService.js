@@ -78,7 +78,7 @@ export const sendVerificationEmail = async (userEmail, otp, userName = '') => {
     // Make sure your EmailJS service "To Email" is mapped to 'user_email'
     const templateParams = {
       // User information (EmailJS service should map 'user_email' to "To Email")
-      user_name: userName || userEmail.split('@')[0],
+      user_name: userName || (userEmail ? userEmail.split('@')[0] : 'User'),
       user_email: userEmail,  // This is likely mapped to "To Email" in your service
       
       // OTP information
@@ -87,8 +87,8 @@ export const sendVerificationEmail = async (userEmail, otp, userName = '') => {
       
       // App information
       app_name: 'Zennest',
-      app_link: window.location.origin + '/verify-email',
-      website_link: window.location.origin,
+      app_link: (typeof window !== 'undefined' ? window.location.origin : '') + '/verify-email',
+      website_link: typeof window !== 'undefined' ? window.location.origin : '',
       
       // Additional
       current_year: new Date().getFullYear(),
@@ -238,12 +238,12 @@ export const sendHostVerificationEmail = async (userEmail, otp, userName = '') =
       to_email: userEmail,      // Primary recipient field (check EmailJS service mapping)
       user_email: userEmail,    // Backup recipient field
       email: userEmail,         // Another common recipient field name
-      user_name: userName || userEmail.split('@')[0],
+      user_name: userName || (userEmail ? userEmail.split('@')[0] : 'Host'),
       otp_code: otp,
       expiry_time: formattedTime,
       app_name: 'Zennest',
-      app_link: window.location.origin + '/host/verify-email',
-      website_link: window.location.origin,
+      app_link: (typeof window !== 'undefined' ? window.location.origin : '') + '/host/verify-email',
+      website_link: typeof window !== 'undefined' ? window.location.origin : '',
       current_year: new Date().getFullYear(),
     };
 
@@ -341,7 +341,7 @@ export const sendBookingConfirmationEmail = async (bookingData) => {
       });
     };
 
-    // Send email to guest
+    // Send email to guest only (host does not receive confirmation email)
     const guestTemplateParams = {
       user_email: guestEmail,
       user_name: guestName || guestEmail?.split('@')[0] || 'Guest',
@@ -356,32 +356,12 @@ export const sendBookingConfirmationEmail = async (bookingData) => {
       category: category || 'booking',
       host_name: hostName || 'Host',
       app_name: 'Zennest',
-      website_link: window.location.origin,
-      booking_link: `${window.location.origin}/booking/${bookingId}`,
+      website_link: typeof window !== 'undefined' ? window.location.origin : '',
+      booking_link: typeof window !== 'undefined' && bookingId ? `${window.location.origin}/booking/${bookingId}` : '',
       current_year: new Date().getFullYear(),
     };
 
-    // Send email to host
-    const hostTemplateParams = {
-      user_email: hostEmail,
-      user_name: hostName || hostEmail?.split('@')[0] || 'Host',
-      booking_id: bookingId || 'N/A',
-      listing_title: listingTitle || 'Listing',
-      listing_location: listingLocation || 'Location not specified',
-      check_in: checkIn ? formatDate(checkIn) : 'N/A',
-      check_out: checkOut ? formatDate(checkOut) : 'N/A',
-      guests: guests || 1,
-      nights: nights || 0,
-      total_amount: `₱${(totalAmount || 0).toLocaleString()}`,
-      category: category || 'booking',
-      guest_name: guestName || 'Guest',
-      app_name: 'Zennest',
-      website_link: window.location.origin,
-      booking_link: `${window.location.origin}/host/bookings`,
-      current_year: new Date().getFullYear(),
-    };
-
-    // Send to guest
+    // Send to guest only
     if (guestEmail) {
       try {
         await emailjs.send(
@@ -393,21 +373,6 @@ export const sendBookingConfirmationEmail = async (bookingData) => {
         console.log('✅ Booking confirmation email sent to guest:', guestEmail);
       } catch (error) {
         console.error('❌ Failed to send email to guest:', error);
-      }
-    }
-
-    // Send to host
-    if (hostEmail) {
-      try {
-        await emailjs.send(
-          config.serviceId,
-          config.bookingConfirmationTemplateId,
-          hostTemplateParams,
-          config.publicKey
-        );
-        console.log('✅ Booking confirmation email sent to host:', hostEmail);
-      } catch (error) {
-        console.error('❌ Failed to send email to host:', error);
       }
     }
 
@@ -482,7 +447,7 @@ export const sendBookingCancellationEmail = async (bookingData) => {
       host_name: hostName || 'Host',
       cancelled_by: cancelledBy || 'You',
       app_name: 'Zennest',
-      website_link: window.location.origin,
+      website_link: typeof window !== 'undefined' ? window.location.origin : '',
       current_year: new Date().getFullYear(),
     };
 
@@ -502,7 +467,7 @@ export const sendBookingCancellationEmail = async (bookingData) => {
       guest_name: guestName || 'Guest',
       cancelled_by: cancelledBy || 'Guest',
       app_name: 'Zennest',
-      website_link: window.location.origin,
+      website_link: typeof window !== 'undefined' ? window.location.origin : '',
       current_year: new Date().getFullYear(),
     };
 
