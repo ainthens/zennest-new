@@ -33,7 +33,8 @@ const Filters = ({
   // HomeStays handlers
   const handleResetHomeStays = () => {
     if (setFilters) {
-      setFilters({ location: "", guests: 0, locationSelect: "" });
+      // Also clear date window when present
+      setFilters({ location: "", guests: 0, locationSelect: "", startDate: null, endDate: null });
     }
     if (setSelectedCategory) setSelectedCategory('all');
     if (setPriceRange) setPriceRange('all');

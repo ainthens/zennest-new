@@ -120,63 +120,85 @@ const HomeStays = () => {
   const [favorites, setFavorites] = useState(() => new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 6;
-  const [checkIn, setCheckIn] = useState(null);
-  const [searchDate, setSearchDate] = useState(null);
-  const [showGuestsDropdown, setShowGuestsDropdown] = useState(false);
-  const guestsDropdownRef = useRef(null);
-  
-  // New state for suggested listings and listings near you
-  const [userProvince, setUserProvince] = useState('');
+
+  // DATE RANGE
+  const [dateRange, setDateRange] = useState([null, null]);
+  const [startDate, endDate] = dateRange;
+
+  // ADD THESE MISSING STATES
+  const [isSearching, setIsSearching] = useState(false);
   const [suggestedListings, setSuggestedListings] = useState([]);
   const [listingsNearYou, setListingsNearYou] = useState([]);
-  
-  // Search state - controls visibility of Suggested and Near You sections
-  const [isSearching, setIsSearching] = useState(false);
+  const [userProvince, setUserProvince] = useState('');
 
-  // HomeStay categories
-  const homeStayCategories = ['apartment', 'house', 'villa', 'condo', 'studio', 'other'];
-  const categoryLabels = {
-    apartment: 'Apartment',
-    house: 'House',
-    villa: 'Villa',
-    condo: 'Condo',
-    studio: 'Studio',
-    other: 'Other'
+  // Guests dropdown
+  const [showGuestsDropdown, setShowGuestsDropdown] = useState(false);
+  const [lockGuestsDropdown, setLockGuestsDropdown] = useState(false);
+  const guestsDropdownRef = useRef(null);
+
+  // Small helper to check availability across a range
+  const isRangeUnavailable = (list = [], s, e) => {
+    if (!s || !e) return false;
+    const cur = new Date(s);
+    const end = new Date(e);
+    while (cur <= end) {
+      const d = cur.toISOString().split("T")[0];
+      if (list.includes(d)) return true;
+      cur.setDate(cur.getDate() + 1);
+    }
+    return false;
   };
 
-  // Price range options
-  const priceRangeOptions = [
-    { value: 'low', label: 'Under ₱1,000/night' },
-    { value: 'medium', label: '₱1,000 - ₱3,000/night' },
-    { value: 'high', label: 'Over ₱3,000/night' }
-  ];
-
-
-  // Handle URL search params from Hero search
+  // Handle URL search params from Hero search (accept both start/end and startDate/endDate)
   useEffect(() => {
     const locationParam = searchParams.get('location');
-    const checkInParam = searchParams.get('checkIn');
+    const startParam = searchParams.get('start') || searchParams.get('startDate');
+    const endParam = searchParams.get('end') || searchParams.get('endDate');
     const guestsParam = searchParams.get('guests');
 
-    if (locationParam || checkInParam || guestsParam) {
-      const location = locationParam || '';
-      const guests = guestsParam ? parseInt(guestsParam) : 0;
+    const parsedStart = startParam ? new Date(startParam) : null;
+    const parsedEnd = endParam ? new Date(endParam) : null;
+
+    if (locationParam || startParam || endParam || guestsParam) {
       setFilters(prev => ({
         ...prev,
-        location: location,
-        guests: guests
+        location: locationParam || '',
+        guests: guestsParam ? parseInt(guestsParam) : 0,
+        startDate: parsedStart,
+        endDate: parsedEnd
       }));
       setSearchInputs({
-        location: location,
-        guests: guests
+        location: locationParam || '',
+        guests: guestsParam ? parseInt(guestsParam) : 0
       });
-      if (checkInParam) {
-        const checkInDate = new Date(checkInParam);
-        setCheckIn(checkInDate);
-        setSearchDate(checkInDate);
+      if (parsedStart || parsedEnd) {
+        setDateRange([parsedStart, parsedEnd]);
       }
     }
   }, [searchParams]);
+
+  // Real-time search: whenever inputs or date range change, update filters and search mode
+  // MODIFIED: Don't run when guests dropdown is locked
+  useEffect(() => {
+    if (lockGuestsDropdown) return; // Skip when dropdown is open
+    
+    const [s, e] = dateRange;
+    setFilters(prev => ({
+      ...prev,
+      location: (searchInputs.location || "").trim(),
+      guests: Number(searchInputs.guests || 0),
+      startDate: s || null,
+      endDate: e || null
+    }));
+
+    setIsSearching(
+      (searchInputs.location?.trim() !== "") ||
+      (Number(searchInputs.guests) > 0) ||
+      (s && e)
+    );
+
+    setCurrentPage(1);
+  }, [searchInputs, dateRange, lockGuestsDropdown]);
 
   // Close guests dropdown when clicking outside
   useEffect(() => {
@@ -466,125 +488,60 @@ const HomeStays = () => {
   // Filter listings for search results (only used when isSearching is true)
   const searchedListings = useMemo(() => {
     if (!isSearching) return [];
-    
     const searchQuery = (filters.location || '').toLowerCase().trim();
-    if (!searchQuery && filters.guests === 0 && !checkIn) return [];
-    
+    if (!searchQuery && filters.guests === 0 && !startDate && !endDate) return [];
+
     return listings.filter((listing) => {
-      // Search by title
-      const titleMatch = listing.title && listing.title.toLowerCase().includes(searchQuery);
-      
-      // Search by province
-      const provinceMatch = listing.province && listing.province.toLowerCase().includes(searchQuery);
-      
-      // Search by location (full location string)
-      const locationMatch = listing.location && listing.location.toLowerCase().includes(searchQuery);
-      
-      // At least one field must match if search query exists
-      if (searchQuery) {
-        if (!titleMatch && !provinceMatch && !locationMatch) return false;
-      }
-      
-      // Filter by guests if specified
-      if (filters.guests > 0 && listing.guests && listing.guests < filters.guests) {
-        return false;
-      }
-      
-      // Filter by date availability if specified
-      if (checkIn) {
-        const formatDate = (date) => {
-          if (!date) return null;
-          const d = new Date(date);
-          const y = d.getFullYear();
-          const m = String(d.getMonth() + 1).padStart(2, '0');
-          const day = String(d.getDate()).padStart(2, '0');
-          return `${y}-${m}-${day}`;
-        };
-        const selected = formatDate(checkIn);
-        // If listing has this date as unavailable → EXCLUDE it
-        if (listing.unavailableDates && Array.isArray(listing.unavailableDates) && listing.unavailableDates.includes(selected)) {
-          return false;
-        }
-      }
-      
+      const titleMatch = listing.title?.toLowerCase().includes(searchQuery);
+      const provinceMatch = listing.province?.toLowerCase().includes(searchQuery);
+      const locationMatch = listing.location?.toLowerCase().includes(searchQuery);
+      if (searchQuery && !titleMatch && !provinceMatch && !locationMatch) return false;
+
+      if (filters.guests > 0 && listing.guests && listing.guests < filters.guests) return false;
+
+      if (isRangeUnavailable(listing.unavailableDates || [], startDate, endDate)) return false;
+
       return true;
     });
-  }, [listings, filters, checkIn, isSearching]);
+  }, [listings, filters, startDate, endDate, isSearching]);
 
   const filtered = useMemo(() => {
-    // Local date formatter to convert Date objects to YYYY-MM-DD strings
-    const formatDate = (date) => {
-      if (!date) return null;
-      const y = date.getFullYear();
-      const m = String(date.getMonth() + 1).padStart(2, '0');
-      const d = String(date.getDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    };
-
-    // CRITICAL: Do NOT filter out listings that appear in Suggested or Near You sections
-    // All listings must appear in "List of All Bookings" regardless of where else they appear
     let results = listings.filter((h) => {
-      // Location search filter
       if (filters.location && !h.location.toLowerCase().includes(filters.location.toLowerCase())) return false;
-      
-      // Location select filter
       if (filters.locationSelect && h.location !== filters.locationSelect) return false;
-      
-      // Guests filter
       if (filters.guests && h.guests < filters.guests) return false;
 
-      // Date availability filter - exclude listings where selected date is unavailable
-      if (checkIn) {
-        const selected = formatDate(checkIn);
-        // If listing has this date as unavailable → EXCLUDE it
-        if (h.unavailableDates && Array.isArray(h.unavailableDates) && h.unavailableDates.includes(selected)) {
-          return false;
-        }
-      }
+      if (isRangeUnavailable(h.unavailableDates || [], startDate, endDate)) return false;
 
-      // Category filter
       if (selectedCategory !== 'all') {
         const title = (h.title || '').toLowerCase();
         const desc = (h.description || '').toLowerCase();
         let listingCategory = 'other';
-        
-        if (title.includes('apartment') || desc.includes('apartment')) {
-          listingCategory = 'apartment';
-        } else if (title.includes('villa') || desc.includes('villa')) {
-          listingCategory = 'villa';
-        } else if (title.includes('condo') || desc.includes('condo')) {
-          listingCategory = 'condo';
-        } else if (title.includes('studio') || desc.includes('studio')) {
-          listingCategory = 'studio';
-        } else if (title.includes('house') || desc.includes('house') || desc.includes('home')) {
-          listingCategory = 'house';
-        }
-        
+        if (title.includes('apartment') || desc.includes('apartment')) listingCategory = 'apartment';
+        else if (title.includes('villa') || desc.includes('villa')) listingCategory = 'villa';
+        else if (title.includes('condo') || desc.includes('condo')) listingCategory = 'condo';
+        else if (title.includes('studio') || desc.includes('studio')) listingCategory = 'studio';
+        else if (title.includes('house') || desc.includes('house') || desc.includes('home')) listingCategory = 'house';
         if (listingCategory !== selectedCategory) return false;
       }
 
-      // Price range filter
       if (priceRange !== 'all') {
         const price = h.pricePerNight || 0;
         switch (priceRange) {
           case 'low':
-            if (price >= 1000) return false;
-            break;
+            if (price >= 1000) return false; break;
           case 'medium':
-            if (price < 1000 || price > 3000) return false;
-            break;
+            if (price < 1000 || price > 3000) return false; break;
           case 'high':
-            if (price <= 3000) return false;
-            break;
+            if (price <= 3000) return false; break;
         }
       }
 
       return true;
     });
 
-    // Default order (featured)
     return results;
-  }, [listings, filters, checkIn, selectedCategory, priceRange]);
+  }, [listings, filters, startDate, endDate, selectedCategory, priceRange]);
 
   // Determine which listings to display: search results when searching, otherwise filtered listings
   const displayListings = isSearching ? searchedListings : filtered;
@@ -598,15 +555,15 @@ const HomeStays = () => {
   // Reset to page 1 when filters change or search mode changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [filters, checkIn, selectedCategory, priceRange, isSearching]);
+  }, [filters, startDate, endDate, selectedCategory, priceRange, isSearching]);
 
   // Reset isSearching when search inputs are cleared
   useEffect(() => {
-    const hasSearchQuery = searchInputs.location.trim().length > 0 || searchInputs.guests > 0 || searchDate !== null;
+    const hasSearchQuery = searchInputs.location.trim().length > 0 || searchInputs.guests > 0 || (startDate && endDate);
     if (!hasSearchQuery && isSearching) {
       setIsSearching(false);
     }
-  }, [searchInputs, searchDate, isSearching]);
+  }, [searchInputs, startDate, endDate, isSearching]);
 
   const handleToggleFavorite = async (id) => {
     if (!user?.uid) {
@@ -639,90 +596,26 @@ const HomeStays = () => {
   };
 
   const clearAllFilters = () => {
-    setFilters({ location: "", guests: 0, locationSelect: "" });
+    setFilters({ location: "", guests: 0, locationSelect: "", startDate: null, endDate: null });
     setSearchInputs({ location: "", guests: 0 });
     setSelectedCategory("all");
     setPriceRange("all");
-    setCheckIn(null);
-    setSearchDate(null);
-    setIsSearching(false); // Reset search mode when clearing filters
+    setDateRange([null, null]);
+    setIsSearching(false);
   };
 
-  const handleSearch = (e) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    
-    // Check if search is being performed (any search input has value)
-    const hasSearchQuery = searchInputs.location.trim().length > 0 || searchInputs.guests > 0 || searchDate !== null;
-    setIsSearching(hasSearchQuery);
-    
-    // Update filters with search input values when search button is clicked
-    setFilters(prev => ({
-      ...prev,
-      location: searchInputs.location,
-      guests: searchInputs.guests
-    }));
-    setCheckIn(searchDate);
-    setCurrentPage(1);
-    
-    // Scroll to homestays list after a short delay to ensure DOM is updated
-    setTimeout(() => {
-      // Try to find the homestays list section first
-      const homestaysSection = document.getElementById('homestays-list');
-      if (homestaysSection) {
-        const headerOffset = 100;
-        const elementPosition = homestaysSection.getBoundingClientRect().top;
-        const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
-        
-        window.scrollTo({
-          top: Math.max(0, offsetPosition),
-          behavior: 'smooth'
-        });
-        return;
-      }
-      
-      // Fallback: scroll to filters section
-      const filtersSection = document.getElementById('filters-section');
-      if (filtersSection) {
-        const headerOffset = 100;
-        const elementPosition = filtersSection.getBoundingClientRect().top;
-        const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
-        
-        window.scrollTo({
-          top: Math.max(0, offsetPosition),
-          behavior: 'smooth'
-        });
-        return;
-      }
-      
-      // Last resort: scroll to recommendations section
-      const recommendationsSection = document.querySelector('[class*="Recommendations"]');
-      if (recommendationsSection) {
-        const headerOffset = 100;
-        const elementPosition = recommendationsSection.getBoundingClientRect().top;
-        const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
-        
-        window.scrollTo({
-          top: Math.max(0, offsetPosition),
-          behavior: 'smooth'
-        });
-      }
-    }, 200);
-  };
-
-  const CustomDateInput = React.forwardRef(({ value, onClick, placeholder }, ref) => (
+  // Date input (no manual open/close, DatePicker controls it)
+  const CustomDateInput = React.forwardRef(({ value, onClick, placeholder = "Check-in — Check-out" }, ref) => (
     <div className="relative w-full">
       <input
-        onClick={onClick}
         ref={ref}
+        onClick={onClick}
         value={value}
         placeholder={placeholder}
         readOnly
         className="w-full pl-10 pr-4 py-3 text-sm focus:outline-none cursor-pointer hover:bg-gray-50 transition-colors border-0"
       />
-      <FaCalendarAlt className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm pointer-events-none" />
+      <FaCalendarAlt className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none" />
     </div>
   ));
 
@@ -770,47 +663,79 @@ const HomeStays = () => {
               {/* Divider */}
               <div className="hidden sm:block w-px h-12 bg-gray-200 mx-1"></div>
 
-              {/* Date */}
+              {/* Date (Stable range picker) */}
               <div className="flex-1 min-w-0 border-b sm:border-b-0 border-gray-200">
                 <label className="block text-xs font-semibold text-gray-900 mb-1 px-4 pt-2">Date</label>
                 <DatePicker
-                  selected={searchDate}
-                  onChange={(date) => setSearchDate(date)}
+                  selectsRange
+                  startDate={dateRange[0]}
+                  endDate={dateRange[1]}
+                  onChange={(update) => setDateRange(update)}
+                  isClearable
                   minDate={new Date()}
-                  dateFormat="MMM dd"
-                  placeholderText="Select date"
                   customInput={<CustomDateInput />}
                   wrapperClassName="w-full"
-                  popperClassName="z-50"
+                  popperClassName="z-40"
                   popperPlacement="bottom-start"
                 />
               </div>
 
-              {/* Divider */}
               <div className="hidden sm:block w-px h-12 bg-gray-200 mx-1"></div>
 
-              {/* Who */}
-              <div className="flex-1 min-w-0 relative" ref={guestsDropdownRef}>
+              {/* Who (Guests) - FIXED dropdown */}
+              <div
+                className="flex-1 min-w-0 relative"
+                ref={guestsDropdownRef}
+                onClick={(e) => e.stopPropagation()}
+              >
                 <label className="block text-xs font-semibold text-gray-900 mb-1 px-4 pt-2">Who</label>
                 <button
                   type="button"
-                  onClick={() => setShowGuestsDropdown(!showGuestsDropdown)}
-                  className="w-full pl-10 pr-4 py-3 text-sm text-left focus:outline-none hover:bg-gray-50 transition-colors flex items-center justify-between border-0 rounded-none"
+                  aria-haspopup="true"
+                  aria-expanded={showGuestsDropdown}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setShowGuestsDropdown(!showGuestsDropdown);
+                    if (!showGuestsDropdown) {
+                      setLockGuestsDropdown(true); // Lock when opening
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setShowGuestsDropdown((open) => {
+                        if (!open) setLockGuestsDropdown(true);
+                        return !open;
+                      });
+                    }
+                  }}
+                  className="w-full pl-4 pr-4 py-3 text-sm text-left focus:outline-none hover:bg-gray-50 transition-colors flex items-center justify-between border-0 rounded-none cursor-pointer select-none"
                 >
                   <div className="flex items-center gap-2">
-                    <FaUsers className="absolute left-3 text-gray-400 text-sm" />
-                    <span className={searchInputs.guests > 0 ? "text-gray-900" : "text-gray-400"}>
-                      {searchInputs.guests > 0 ? `${searchInputs.guests} ${searchInputs.guests === 1 ? 'guest' : 'guests'}` : 'Add guests'}
+                    <FaUsers className="text-gray-400 text-sm" />
+                    <span className={searchInputs.guests > 0 ? 'text-gray-900' : 'text-gray-400'}>
+                      {searchInputs.guests > 0
+                        ? `${searchInputs.guests} ${searchInputs.guests === 1 ? 'guest' : 'guests'}`
+                        : 'Add guests'}
                     </span>
                   </div>
-                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg
+                    className={`w-4 h-4 text-gray-400 transform transition-transform duration-200 ${showGuestsDropdown ? 'rotate-180' : 'rotate-0'}`}
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                   </svg>
                 </button>
-                
+
                 {/* Guests Dropdown */}
                 {showGuestsDropdown && (
-                  <div className="absolute top-full left-0 right-0 sm:left-auto sm:right-0 sm:w-80 mt-2 bg-white rounded-2xl shadow-xl border border-gray-200 p-6 z-50">
+                  <div
+                    className="absolute top-full left-0 right-0 sm:left-auto sm:right-0 sm:w-80 mt-2 bg-white rounded-2xl shadow-xl border border-gray-200 p-6 z-[9999]"
+                    onClick={(e) => e.stopPropagation()}
+                    role="dialog"
+                    aria-label="Select guests"
+                  >
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <div>
@@ -820,17 +745,25 @@ const HomeStays = () => {
                         <div className="flex items-center gap-4">
                           <button
                             type="button"
-                            onClick={() => setSearchInputs({ ...searchInputs, guests: Math.max(0, searchInputs.guests - 1) })}
-                            disabled={searchInputs.guests <= 0}
-                            className="w-8 h-8 rounded-full border-2 border-gray-300 flex items-center justify-center hover:border-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setSearchInputs((prev) => ({ ...prev, guests: Math.max(0, Number(prev.guests) - 1) }));
+                            }}
+                            disabled={Number(searchInputs.guests) <= 0}
+                            className="w-8 h-8 rounded-full border-2 border-gray-300 flex items-center justify-center hover:border-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500"
                           >
                             <span className="text-gray-600">−</span>
                           </button>
                           <span className="w-8 text-center font-semibold">{searchInputs.guests}</span>
                           <button
                             type="button"
-                            onClick={() => setSearchInputs({ ...searchInputs, guests: searchInputs.guests + 1 })}
-                            className="w-8 h-8 rounded-full border-2 border-gray-300 flex items-center justify-center hover:border-gray-400 transition-colors"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setSearchInputs((prev) => ({ ...prev, guests: Number(prev.guests) + 1 }));
+                            }}
+                            className="w-8 h-8 rounded-full border-2 border-gray-300 flex items-center justify-center hover:border-gray-400 transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500"
                           >
                             <span className="text-gray-600">+</span>
                           </button>
@@ -839,25 +772,18 @@ const HomeStays = () => {
                     </div>
                     <button
                       type="button"
-                      onClick={() => setShowGuestsDropdown(false)}
-                      className="mt-4 w-full text-left text-sm font-semibold text-emerald-600 hover:text-emerald-700"
+                      onClick={(e) => { 
+                        e.preventDefault(); 
+                        e.stopPropagation(); 
+                        setShowGuestsDropdown(false);
+                        setLockGuestsDropdown(false); // Unlock when closing
+                      }}
+                      className="mt-4 w-full text-left text-sm font-semibold text-emerald-600 hover:text-emerald-700 focus:outline-none"
                     >
                       Done
                     </button>
                   </div>
                 )}
-              </div>
-
-              {/* Search Button */}
-              <div className="flex items-end pb-0 sm:pb-0 sm:ml-2 p-2 pt-3 sm:pt-2">
-                <button
-                  type="button"
-                  onClick={handleSearch}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-full px-6 py-3 sm:px-6 sm:py-3 transition-all duration-200 flex items-center justify-center gap-2 shadow-md hover:shadow-lg transform hover:scale-105 active:scale-95 w-full sm:w-auto font-semibold text-sm"
-                >
-                  <FaSearch className="text-sm" />
-                  <span>Search</span>
-                </button>
               </div>
             </motion.div>
           </AnimatedSection>
@@ -876,8 +802,10 @@ const HomeStays = () => {
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
                 >
                   <option value="all">All Categories</option>
-                  {(categories.length > 0 ? categories : homeStayCategories).map(cat => (
-                    <option key={cat} value={cat}>{categoryLabels[cat] || cat}</option>
+                  {(Array.isArray(categories) && categories.length > 0 ? categories : homeStayCategories).map((cat) => (
+                    <option key={cat} value={cat}>
+                      {categoryLabels[cat] || cat}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -898,7 +826,7 @@ const HomeStays = () => {
             </div>
 
             {/* Active Filters Count */}
-            {(filters.location || filters.guests > 0 || checkIn || selectedCategory !== 'all' || priceRange !== 'all') && (
+            {(filters.location || filters.guests > 0 || startDate || endDate || selectedCategory !== 'all' || priceRange !== 'all') && (
               <div className="mt-4 flex items-center justify-between pt-4 border-t border-gray-200">
                 <div className="text-sm text-gray-600">
                   Showing {isSearching ? searchedListings.length : filtered.length} of {listings.length} homestays
@@ -1132,3 +1060,30 @@ const HomeStays = () => {
 };
 
 export default HomeStays;
+
+// ADD: fallback categories and labels (prevents ReferenceError)
+const homeStayCategories = [
+  'apartment',
+  'villa',
+  'condo',
+  'studio',
+  'house',
+  'other'
+];
+
+const categoryLabels = {
+  apartment: 'Apartment',
+  villa: 'Villa',
+  condo: 'Condo',
+  studio: 'Studio',
+  house: 'House',
+  other: 'Other'
+};
+
+// ADD: fallback price range options (prevents ReferenceError)
+const priceRangeOptions = [
+  { value: "all", label: "All Prices" },
+  { value: "low", label: "₱0 - ₱999" },
+  { value: "medium", label: "₱1,000 - ₱3,000" },
+  { value: "high", label: "₱3,001+" },
+];

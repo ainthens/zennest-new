@@ -94,8 +94,15 @@ const HostVouchers = () => {
         return;
       }
       
-      const start = startDate instanceof Date ? startDate : new Date(startDate);
-      const end = endDate instanceof Date ? endDate : new Date(endDate);
+      // Sort dates to ensure start is before end
+      let start = startDate instanceof Date ? new Date(startDate) : new Date(startDate);
+      let end = endDate instanceof Date ? new Date(endDate) : new Date(endDate);
+      
+      // Swap if end is before start
+      if (end < start) {
+        [start, end] = [end, start];
+      }
+      
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       start.setHours(0, 0, 0, 0);
@@ -120,11 +127,12 @@ const HostVouchers = () => {
         return;
       }
 
+      // Use sorted dates for saving
       const voucherData = {
         discountPercentage: parseFloat(discountPercentage),
-        startDate: startDate ? startDate.toISOString().split('T')[0] : null,
-        endDate: endDate ? endDate.toISOString().split('T')[0] : null,
-        expirationDate: endDate ? endDate.toISOString().split('T')[0] : null, // Keep for backward compatibility
+        startDate: start.toISOString().split('T')[0],
+        endDate: end.toISOString().split('T')[0],
+        expirationDate: end.toISOString().split('T')[0], // Keep for backward compatibility
         usageLimit: parseInt(usageLimit) || 1
       };
 
@@ -480,25 +488,15 @@ const HostVouchers = () => {
                         <DatePicker
                           selected={startDate}
                           onChange={(dates) => {
-                            // When selectsRange is true, onChange receives:
-                            // - A single Date when selecting the first date
-                            // - An array [startDate, endDate] when both dates are selected
-                            if (Array.isArray(dates)) {
-                              const [start, end] = dates;
-                              setStartDate(start);
-                              setEndDate(end || null);
-                            } else if (dates) {
-                              // Single date selected (first click)
-                              setStartDate(dates);
-                              // If we already have an end date and the new start is after it, clear end date
-                              if (endDate && dates > endDate) {
-                                setEndDate(null);
-                              }
-                            } else {
-                              // Cleared
+                            if (!dates) {
                               setStartDate(null);
                               setEndDate(null);
+                              return;
                             }
+
+                            const [start, end] = dates;
+                            setStartDate(start || null);
+                            setEndDate(end || null);
                           }}
                           startDate={startDate}
                           endDate={endDate}

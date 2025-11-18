@@ -1,6 +1,6 @@
 // src/components/Hero.jsx
 import React, { useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useInView } from "react-intersection-observer";
 import waveSvg from "../assets/wave (1).svg";
@@ -14,6 +14,18 @@ const Hero = () => {
     triggerOnce: true,
     threshold: 0.2,
   });
+  const [params] = useSearchParams();
+  const startParam = params.get("start") || params.get("startDate");
+  const endParam = params.get("end") || params.get("endDate");
+  const withDates = (path) => {
+    if (startParam || endParam) {
+      const sp = new URLSearchParams();
+      if (startParam) sp.set("start", startParam);
+      if (endParam) sp.set("end", endParam);
+      return `${path}?${sp.toString()}`;
+    }
+    return path;
+  };
 
   // Use local video from assets folder
   const heroVideoUrl = heroVideo;
@@ -209,14 +221,15 @@ const Hero = () => {
               transition={{ duration: 0.8, delay: 1.1 }}
               className="flex flex-col sm:flex-row gap-2 sm:gap-2.5 md:gap-3 justify-center lg:justify-start px-2 sm:px-0"
             >
-              <motion.button 
+              <motion.div 
+                // Explore Now CTA keeps any date params present
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
-                onClick={() => navigate('/homestays')}
+                onClick={() => navigate(withDates('/homestays'))}
                 className="px-4 sm:px-5 md:px-6 py-2 sm:py-2.5 md:py-3 bg-emerald-600 text-white font-medium rounded-lg md:rounded-xl hover:bg-emerald-700 transition-all duration-300 shadow-lg hover:shadow-xl text-xs sm:text-sm w-full sm:w-auto"
               >
                 Explore Now
-              </motion.button>
+              </motion.div>
               <motion.button 
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
@@ -241,21 +254,21 @@ const Hero = () => {
                 title: "Beach", 
                 desc: "Coastal escapes", 
                 color: "text-blue-300",
-                onClick: () => navigate('/homestays?category=beach')
+                onClick: () => navigate(withDates('/homestays?category=beach'))
               },
               { 
                 icon: FaCity, 
                 title: "City", 
                 desc: "Urban stays", 
                 color: "text-purple-300",
-                onClick: () => navigate('/homestays?category=city')
+                onClick: () => navigate(withDates('/homestays?category=city'))
               },
               { 
                 icon: FaMountain, 
                 title: "Countryside", 
                 desc: "Nature retreats", 
                 color: "text-green-300",
-                onClick: () => navigate('/homestays?category=countryside')
+                onClick: () => navigate(withDates('/homestays?category=countryside'))
               },
               { 
                 icon: FaUtensils, 
