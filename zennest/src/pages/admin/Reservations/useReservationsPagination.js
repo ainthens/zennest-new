@@ -25,7 +25,7 @@ export function useReservationsPagination({ pageSize = 10 }) {
         orderDirection: 'desc'
       });
 
-      if (result.bookings.length > 0) {
+      if (result && result.bookings && result.bookings.length > 0) {
         // Push current lastVisible to stack for back navigation
         if (lastVisible) {
           setPageStack(prev => [...prev, lastVisible]);
@@ -34,14 +34,18 @@ export function useReservationsPagination({ pageSize = 10 }) {
         setBookings(result.bookings);
         setLastVisible(result.lastVisible);
         setFirstVisible(result.bookings[0]?.id || null);
-        setHasMore(result.hasMore);
+        setHasMore(result.hasMore !== undefined ? result.hasMore : true);
         setPage(prev => prev + 1);
       } else {
         setHasMore(false);
+        // If we have no bookings but expected some, show a message
+        if (page === 0) {
+          setError('No bookings found.');
+        }
       }
     } catch (err) {
       console.error('Error fetching next page:', err);
-      setError(err.message);
+      setError('Failed to load bookings. Please try again later.');
     } finally {
       setLoading(false);
     }
@@ -96,8 +100,19 @@ export function useReservationsPagination({ pageSize = 10 }) {
         orderDirection: 'desc'
       });
 
-      setBookings(result.bookings);
-      setLastVisible(result.lastVisible);
+      if (result && result.bookings) {
+        setBookings(result.bookings);
+        setLastVisible(result.lastVisible);
+        setHasMore(result.hasMore !== undefined ? result.hasMore : true);
+        
+        if (result.bookings.length === 0) {
+          setError('No bookings found.');
+        }
+      } else {
+        setBookings([]);
+        setHasMore(false);
+        setError('Failed to load bookings. Please try again later.');
+      }
       setFirstVisible(result.bookings[0]?.id || null);
       setHasMore(result.hasMore);
     } catch (err) {

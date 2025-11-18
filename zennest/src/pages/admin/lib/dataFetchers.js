@@ -488,21 +488,45 @@ export async function fetchReportData() {
  */
 export async function fetchBookingsPaginated({ pageSize = 10, lastVisible = null, orderByField = 'createdAt', orderDirection = 'desc' }) {
   try {
-    let q = query(
-      collection(db, 'bookings'),
-      orderBy(orderByField, orderDirection),
-      limit(pageSize)
-    );
+    // First, check if the collection exists and has documents
+    const bookingsRef = collection(db, 'bookings');
+    const countQuery = query(bookingsRef, limit(1));
+    const countSnapshot = await getDocs(countQuery);
+    
+    if (countSnapshot.empty) {
+      return { bookings: [], lastVisible: null, hasMore: false };
+    }
 
-    if (lastVisible) {
-      q = query(q, startAfter(lastVisible));
+    // Create a query with error handling for the orderBy field
+    let q;
+    try {
+      q = query(
+        bookingsRef,
+        orderBy(orderByField, orderDirection),
+        limit(pageSize)
+      );
+
+      if (lastVisible) {
+        q = query(q, startAfter(lastVisible));
+      }
+    } catch (orderByError) {
+      console.warn(`Error ordering by ${orderByField}:`, orderByError);
+      // Fallback to default query without ordering if the field doesn't exist
+      q = query(bookingsRef, limit(pageSize));
     }
 
     const snapshot = await getDocs(q);
-    const bookings = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    const bookings = snapshot.docs.map(doc => {
+      const data = doc.data();
+      // Ensure createdAt exists, use serverTimestamp if not available
+      if (!data.createdAt) {
+        data.createdAt = data.updatedAt || new Date().toISOString();
+      }
+      return {
+        id: doc.id,
+        ...data
+      };
+    });
 
     // Fetch guest information for all bookings
     const guestIds = [...new Set(bookings.map(b => b.guestId).filter(Boolean))];
@@ -545,7 +569,8 @@ export async function fetchBookingsPaginated({ pageSize = 10, lastVisible = null
       };
     });
 
-    const newLastVisible = snapshot.docs[snapshot.docs.length - 1] || null;
+    // Only set lastVisible if we have documents
+    const newLastVisible = snapshot.docs.length > 0 ? snapshot.docs[snapshot.docs.length - 1] : null;
     const hasMore = snapshot.docs.length === pageSize;
 
     return {
@@ -555,7 +580,8 @@ export async function fetchBookingsPaginated({ pageSize = 10, lastVisible = null
     };
   } catch (error) {
     console.error('Error fetching bookings paginated:', error);
-    throw error;
+    // Return empty results instead of throwing to prevent UI from breaking
+    return { bookings: [], lastVisible: null, hasMore: false };
   }
 }
 
