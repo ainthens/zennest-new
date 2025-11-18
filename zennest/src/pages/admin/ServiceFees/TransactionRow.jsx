@@ -26,6 +26,7 @@ const TransactionRow = ({ transaction }) => {
         <span className={`px-2 sm:px-3 py-1 rounded-full text-xs font-semibold ${
           transaction.status === 'completed' ? 'bg-green-100 text-green-800' :
           transaction.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+          transaction.status === 'cancelled' ? 'bg-red-100 text-red-800' :
           transaction.status === 'refunded' ? 'bg-red-100 text-red-800' :
           'bg-gray-100 text-gray-800'
         }`}>

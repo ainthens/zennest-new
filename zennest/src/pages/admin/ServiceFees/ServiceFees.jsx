@@ -7,6 +7,7 @@ import { fetchTransactions, calculateAdminBalanceFromTransactions } from '../lib
 import { generatePDFReport, printReport } from '../lib/reportUtils';
 import CashoutModal from './CashoutModal';
 import TransactionRow from './TransactionRow';
+import ReportDateRangeModal from '../../../components/modals/ReportDateRangeModal';
 import { collection, addDoc, serverTimestamp, doc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { parseDate } from '../../../utils/dateUtils';
@@ -26,6 +27,12 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [hostFilter, setHostFilter] = useState('');
   const [localLoading, setLocalLoading] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportRange, setReportRange] = useState({
+    startDate: null,
+    endDate: null,
+    enabled: false
+  });
 
   useEffect(() => {
     loadTransactions();
@@ -44,21 +51,47 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
   };
 
   // Helper function to normalize dates (remove time component)
-  const normalizeDate = (date) => {
-    if (!date) return null;
-    const d = new Date(date);
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  // Properly handles Firestore Timestamps, Date objects, and date strings
+  const normalizeDate = (dateValue) => {
+    if (!dateValue) return null;
+    
+    // Use parseDate utility to handle Firestore Timestamps, Date objects, ISO strings, etc.
+    const parsed = parseDate(dateValue);
+    if (!parsed) return null;
+    
+    // Normalize to start of day (midnight) for accurate date-only comparisons
+    // This avoids timezone issues when comparing dates
+    const year = parsed.getFullYear();
+    const month = parsed.getMonth();
+    const day = parsed.getDate();
+    return new Date(year, month, day, 0, 0, 0, 0);
+  };
+
+  // Helper function to normalize end dates to end of day (23:59:59)
+  const normalizeEndDate = (dateValue) => {
+    if (!dateValue) return null;
+    
+    const parsed = parseDate(dateValue);
+    if (!parsed) return null;
+    
+    // Normalize to end of day for inclusive end date comparisons
+    const year = parsed.getFullYear();
+    const month = parsed.getMonth();
+    const day = parsed.getDate();
+    return new Date(year, month, day, 23, 59, 59, 999);
   };
 
   // Helper function to check if transaction falls within date range
   const isWithinDateRange = (transaction) => {
     if (!dateRange.startDate && !dateRange.endDate) return true;
     
+    // Parse transaction date using parseDate utility
     const transactionDate = transaction.date ? normalizeDate(transaction.date) : null;
     if (!transactionDate) return false;
 
+    // Parse filter dates
     const startDate = dateRange.startDate ? normalizeDate(dateRange.startDate) : null;
-    const endDate = dateRange.endDate ? normalizeDate(dateRange.endDate) : null;
+    const endDate = dateRange.endDate ? normalizeEndDate(dateRange.endDate) : null;
 
     // Case 1: Only start date provided - show transactions on or after start date
     if (startDate && !endDate) {
@@ -70,7 +103,7 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
       return transactionDate <= endDate;
     }
 
-    // Case 3: Both dates provided - show transactions within the range
+    // Case 3: Both dates provided - show transactions within the range (inclusive)
     if (startDate && endDate) {
       return transactionDate >= startDate && transactionDate <= endDate;
     }
@@ -315,8 +348,63 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
     }
   };
 
-  const handleExportPDF = () => {
+  const handleExportPDF = (range = null) => {
     try {
+      // Helper function to normalize dates for filter
+      // Uses parseDate utility to handle Firestore Timestamps, Date objects, and date strings
+      const normalizeDateForFilter = (dateValue) => {
+        if (!dateValue) return null;
+        const parsed = parseDate(dateValue);
+        if (!parsed) return null;
+        const d = new Date(parsed);
+        d.setHours(0, 0, 0, 0);
+        return d;
+      };
+
+      // Helper function to normalize end dates to end of day
+      const normalizeEndDateForFilter = (dateValue) => {
+        if (!dateValue) return null;
+        const parsed = parseDate(dateValue);
+        if (!parsed) return null;
+        const d = new Date(parsed);
+        d.setHours(23, 59, 59, 999);
+        return d;
+      };
+
+      // Helper function to check if transaction date falls within report date range
+      const isWithinReportDateRange = (transaction) => {
+        // Use report range if provided, otherwise use existing dateRange
+        const filterRange = range && range.enabled ? range : (dateRange.startDate || dateRange.endDate ? { startDate: dateRange.startDate, endDate: dateRange.endDate } : null);
+        
+        if (!filterRange || (!filterRange.startDate && !filterRange.endDate)) return true;
+
+        const transactionDate = transaction.date ? normalizeDateForFilter(transaction.date) : null;
+        if (!transactionDate) return false;
+
+        const startDate = filterRange.startDate ? normalizeDateForFilter(filterRange.startDate) : null;
+        const endDate = filterRange.endDate ? normalizeEndDateForFilter(filterRange.endDate) : null;
+
+        if (startDate && !endDate) {
+          return transactionDate >= startDate;
+        }
+
+        if (!startDate && endDate) {
+          return transactionDate <= endDate;
+        }
+
+        if (startDate && endDate) {
+          return transactionDate >= startDate && transactionDate <= endDate;
+        }
+
+        return true;
+      };
+
+      // Filter transactions based on report date range if enabled
+      let dataToExport = [...transactions];
+      if (range && range.enabled) {
+        dataToExport = transactions.filter(transaction => isWithinReportDateRange(transaction));
+      }
+
       const columns = [
         { key: 'date', label: 'Date', width: 1 },
         { key: 'bookingId', label: 'Booking ID', width: 1 },
@@ -328,11 +416,28 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
         { key: 'status', label: 'Status', width: 1 }
       ];
 
-      const dateRangeLabel = dateRange.startDate || dateRange.endDate ? 
-        ` (${dateRange.startDate ? new Date(dateRange.startDate).toLocaleDateString() : 'Any'} to ${dateRange.endDate ? new Date(dateRange.endDate).toLocaleDateString() : 'Any'})` : 
-        '';
+      // Build date range label for report
+      let reportDateRangeLabel = '';
+      if (range && range.enabled && (range.startDate || range.endDate)) {
+        const formatDate = (date) => {
+          if (!date) return 'Any';
+          const d = new Date(date);
+          return d.toLocaleDateString('en-US', { 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric' 
+          });
+        };
+        const startLabel = range.startDate ? formatDate(range.startDate) : 'Any';
+        const endLabel = range.endDate ? formatDate(range.endDate) : 'Any';
+        reportDateRangeLabel = ` (${startLabel} to ${endLabel})`;
+      } else {
+        reportDateRangeLabel = dateRange.startDate || dateRange.endDate ? 
+          ` (${dateRange.startDate ? new Date(dateRange.startDate).toLocaleDateString() : 'Any'} to ${dateRange.endDate ? new Date(dateRange.endDate).toLocaleDateString() : 'Any'})` : 
+          '';
+      }
 
-      const rows = transactions.map(t => ({
+      const rows = dataToExport.map(t => ({
         date: t.date ? new Date(t.date).toLocaleDateString() : 'N/A',
         bookingId: t.bookingId?.substring(0, 8) || 'N/A',
         guest: t.guestName || 'Guest',
@@ -345,18 +450,19 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
 
       generatePDFReport({
         type: 'service-fees',
-        title: `Service Fees Report${dateRangeLabel}`,
+        title: `Service Fees Report${reportDateRangeLabel}`,
         rows,
         columns,
         meta: {
-          dateFrom: dateRange.startDate,
-          dateTo: dateRange.endDate,
+          dateFrom: range && range.enabled ? range.startDate : dateRange.startDate,
+          dateTo: range && range.enabled ? range.endDate : dateRange.endDate,
           generatedBy: 'Admin Dashboard',
-          totalRecords: transactions.length
+          dateRange: reportDateRangeLabel,
+          totalRecords: dataToExport.length
         }
       });
 
-      showToast('PDF report generated successfully');
+      showToast(`PDF report generated successfully (${dataToExport.length} ${dataToExport.length !== 1 ? 'records' : 'record'})`);
     } catch (error) {
       console.error('Error exporting transactions PDF:', error);
       showToast('Failed to generate PDF report', 'error');
@@ -518,7 +624,7 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
               <option value="all">All</option>
               <option value="completed">Completed</option>
               <option value="pending">Pending</option>
-              <option value="refunded">Refunded</option>
+              <option value="cancelled">Cancelled</option>
             </select>
           </div>
 
@@ -527,12 +633,12 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              onClick={handleExportPDF}
+              onClick={() => setShowReportModal(true)}
               disabled={isFetching}
               className="flex-1 px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <FaFilePdf className="text-xs sm:text-sm" />
-              <span className="hidden sm:inline">Export PDF</span>
+              <span className="hidden sm:inline">Generate PDF Report</span>
               <span className="sm:hidden">PDF</span>
             </motion.button>
             <motion.button
@@ -554,7 +660,7 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
           <div className="mt-4 p-2 bg-blue-50 rounded-lg">
             <p className="text-xs text-blue-700 flex items-center gap-2">
               {isFetching && <FaSync className="animate-spin" />}
-              Showing transactions from <strong>{dateRange.startDate ? new Date(dateRange.startDate).toLocaleDateString() : 'any date'}</strong> to <strong>{dateRange.endDate ? new Date(dateRange.endDate).toLocaleDateString() : 'any date'}</strong>
+              Showing transactions from <strong>{dateRange.startDate ? (parseDate(dateRange.startDate)?.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) || dateRange.startDate) : 'any date'}</strong> to <strong>{dateRange.endDate ? (parseDate(dateRange.endDate)?.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) || dateRange.endDate) : 'any date'}</strong>
             </p>
           </div>
         )}
@@ -724,6 +830,31 @@ const ServiceFees = ({ adminBalance, adminFeePercentage, showToast }) => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Report Date Range Modal */}
+      <ReportDateRangeModal
+        isOpen={showReportModal}
+        initialRange={reportRange}
+        onClose={() => setShowReportModal(false)}
+        onGenerate={(range) => {
+          // Validate date range if enabled
+          if (range.enabled && range.startDate && range.endDate) {
+            const start = new Date(range.startDate);
+            const end = new Date(range.endDate);
+            start.setHours(0, 0, 0, 0);
+            end.setHours(0, 0, 0, 0);
+            
+            if (start > end) {
+              showToast('End date cannot be before start date', 'error');
+              return;
+            }
+          }
+          
+          setReportRange(range);
+          handleExportPDF(range);
+          setShowReportModal(false);
+        }}
+      />
     </motion.div>
   );
 };

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { FaCalendarAlt, FaTimes } from 'react-icons/fa';
+import { FaChevronLeft, FaChevronRight, FaTimes } from 'react-icons/fa';
 import Modal from '../../pages/admin/components/Modal';
 
 const ReportDateRangeModal = ({ 
@@ -14,6 +14,10 @@ const ReportDateRangeModal = ({
     endDate: initialRange.endDate || null,
     enabled: initialRange.enabled || false
   });
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [selectedStart, setSelectedStart] = useState(null);
+  const [selectedEnd, setSelectedEnd] = useState(null);
+  const [hoverDate, setHoverDate] = useState(null);
 
   // Update local state when initialRange changes
   useEffect(() => {
@@ -23,65 +27,130 @@ const ReportDateRangeModal = ({
         endDate: initialRange.endDate || null,
         enabled: initialRange.enabled || false
       });
+      if (initialRange.startDate) {
+        setSelectedStart(new Date(initialRange.startDate));
+        setCurrentMonth(new Date(initialRange.startDate));
+      } else {
+        setSelectedStart(null);
+      }
+      if (initialRange.endDate) {
+        setSelectedEnd(new Date(initialRange.endDate));
+      } else {
+        setSelectedEnd(null);
+      }
     }
   }, [isOpen, initialRange]);
 
   const handlePresetSelect = (preset) => {
     const today = new Date();
-    const newRange = { startDate: null, endDate: null, enabled: true };
+    today.setHours(0, 0, 0, 0);
+    let start = null;
+    let end = null;
 
     switch (preset) {
       case 'today':
-        newRange.startDate = new Date(today);
-        newRange.endDate = new Date(today);
-        break;
-      case 'yesterday':
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        newRange.startDate = yesterday;
-        newRange.endDate = yesterday;
-        break;
-      case 'thisWeek':
-        const firstDayOfWeek = new Date(today);
-        firstDayOfWeek.setDate(today.getDate() - today.getDay());
-        newRange.startDate = firstDayOfWeek;
-        newRange.endDate = new Date(today);
-        break;
-      case 'lastWeek':
-        const lastWeekStart = new Date(today);
-        lastWeekStart.setDate(today.getDate() - today.getDay() - 7);
-        const lastWeekEnd = new Date(lastWeekStart);
-        lastWeekEnd.setDate(lastWeekStart.getDate() + 6);
-        newRange.startDate = lastWeekStart;
-        newRange.endDate = lastWeekEnd;
+        start = new Date(today);
+        end = new Date(today);
         break;
       case 'thisMonth':
-        newRange.startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-        newRange.endDate = new Date(today);
+        start = new Date(today.getFullYear(), today.getMonth(), 1);
+        end = new Date(today);
         break;
       case 'lastMonth':
         const firstDayOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
         const lastDayOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
-        newRange.startDate = firstDayOfLastMonth;
-        newRange.endDate = lastDayOfLastMonth;
+        start = firstDayOfLastMonth;
+        end = lastDayOfLastMonth;
         break;
       case 'thisYear':
-        newRange.startDate = new Date(today.getFullYear(), 0, 1);
-        newRange.endDate = new Date(today);
+        start = new Date(today.getFullYear(), 0, 1);
+        end = new Date(today);
         break;
       default:
         break;
     }
 
-    setDateRange(newRange);
+    if (start && end) {
+      setSelectedStart(start);
+      setSelectedEnd(end);
+      setDateRange({
+        startDate: start,
+        endDate: end,
+        enabled: true
+      });
+      setCurrentMonth(new Date(start));
+    }
   };
 
-  const handleDateChange = (type, value) => {
-    setDateRange(prev => ({
-      ...prev,
-      [type]: value ? new Date(value) : null,
-      enabled: true
-    }));
+  const normalizeDate = (date) => {
+    if (!date) return null;
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+
+  const isDateInRange = (date) => {
+    if (!selectedStart || !selectedEnd) return false;
+    const normalizedDate = normalizeDate(date);
+    const normalizedStart = normalizeDate(selectedStart);
+    const normalizedEnd = normalizeDate(selectedEnd);
+    if (!normalizedDate || !normalizedStart || !normalizedEnd) return false;
+    return normalizedDate >= normalizedStart && normalizedDate <= normalizedEnd;
+  };
+
+  const isDateInHoverRange = (date) => {
+    if (!selectedStart || selectedEnd || !hoverDate) return false;
+    const normalizedDate = normalizeDate(date);
+    const normalizedStart = normalizeDate(selectedStart);
+    const normalizedHover = normalizeDate(hoverDate);
+    if (!normalizedDate || !normalizedStart || !normalizedHover) return false;
+    const min = normalizedStart < normalizedHover ? normalizedStart : normalizedHover;
+    const max = normalizedStart > normalizedHover ? normalizedStart : normalizedHover;
+    return normalizedDate >= min && normalizedDate <= max;
+  };
+
+  const handleDateClick = (date) => {
+    const normalizedDate = normalizeDate(date);
+    if (!normalizedDate) return;
+
+    if (!selectedStart || (selectedStart && selectedEnd)) {
+      // Start new selection
+      setSelectedStart(normalizedDate);
+      setSelectedEnd(null);
+      setDateRange({
+        startDate: normalizedDate,
+        endDate: null,
+        enabled: true
+      });
+    } else if (selectedStart && !selectedEnd) {
+      // Complete selection
+      if (normalizedDate < selectedStart) {
+        // If clicked date is before start, make it the new start
+        setSelectedStart(normalizedDate);
+        setSelectedEnd(null);
+        setDateRange({
+          startDate: normalizedDate,
+          endDate: null,
+          enabled: true
+        });
+      } else {
+        // Set end date
+        setSelectedEnd(normalizedDate);
+        setDateRange({
+          startDate: selectedStart,
+          endDate: normalizedDate,
+          enabled: true
+        });
+      }
+    }
+  };
+
+  const nextMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+  };
+
+  const prevMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
   };
 
   const toggleDateRange = () => {
@@ -94,7 +163,7 @@ const ReportDateRangeModal = ({
   const handleSubmit = (e) => {
     e.preventDefault();
     if (dateRange.enabled && dateRange.startDate && dateRange.endDate && dateRange.startDate > dateRange.endDate) {
-      return; // Validation will be handled by the parent component
+      return;
     }
     onGenerate({
       startDate: dateRange.startDate,
@@ -103,11 +172,37 @@ const ReportDateRangeModal = ({
     });
   };
 
-  const formatDateForInput = (date) => {
-    if (!date) return '';
-    const d = new Date(date);
-    return d.toISOString().split('T')[0];
+  const getDaysInMonth = (date) => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const startingDayOfWeek = firstDay.getDay();
+
+    const days = [];
+    
+    // Add empty cells for days before the first day of the month
+    for (let i = 0; i < startingDayOfWeek; i++) {
+      days.push(null);
+    }
+
+    // Add all days of the month
+    for (let day = 1; day <= daysInMonth; day++) {
+      days.push(new Date(year, month, day));
+    }
+
+    return days;
   };
+
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'];
+
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  const calendarDays = getDaysInMonth(currentMonth);
+  const currentYear = currentMonth.getFullYear();
+  const currentMonthIndex = currentMonth.getMonth();
 
   if (!isOpen) return null;
 
@@ -120,27 +215,132 @@ const ReportDateRangeModal = ({
       primaryLabel="Generate Report"
     >
       <div className="space-y-6">
+        {/* Quick Presets */}
         <div>
-          <h4 className="text-sm font-medium text-gray-700 mb-2">Quick Presets</h4>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {['today', 'yesterday', 'thisWeek', 'lastWeek', 'thisMonth', 'lastMonth', 'thisYear'].map((preset) => (
+          <h4 className="text-sm font-medium text-gray-700 mb-3">Quick Presets:</h4>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              { key: 'today', label: 'Today' },
+              { key: 'thisMonth', label: 'This Month' },
+              { key: 'lastMonth', label: 'Last Month' },
+              { key: 'thisYear', label: 'This Year' }
+            ].map((preset) => (
               <motion.button
-                key={preset}
+                key={preset.key}
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 type="button"
-                onClick={() => handlePresetSelect(preset)}
-                className="px-3 py-2 text-xs sm:text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-gray-700"
+                onClick={() => handlePresetSelect(preset.key)}
+                className="px-3 py-2 text-xs sm:text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-gray-700 font-medium"
               >
-                {preset.split(/(?=[A-Z])/).map(word => 
-                  word.charAt(0).toUpperCase() + word.slice(1)
-                ).join(' ')}
+                {preset.label}
               </motion.button>
             ))}
           </div>
         </div>
 
+        {/* Calendar */}
         <div className="space-y-4">
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            {/* Calendar Header with Navigation */}
+            <div className="flex items-center justify-between mb-4">
+              <button
+                type="button"
+                onClick={prevMonth}
+                className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+                aria-label="Previous month"
+              >
+                <FaChevronLeft className="w-4 h-4 text-gray-600" />
+              </button>
+              <h3 className="text-base font-semibold text-gray-900">
+                {monthNames[currentMonthIndex]} {currentYear}
+              </h3>
+              <button
+                type="button"
+                onClick={nextMonth}
+                className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+                aria-label="Next month"
+              >
+                <FaChevronRight className="w-4 h-4 text-gray-600" />
+              </button>
+            </div>
+
+            {/* Day labels */}
+            <div className="grid grid-cols-7 gap-1 mb-2">
+              {dayNames.map((day) => (
+                <div key={day} className="text-center text-xs font-semibold text-gray-600 py-2">
+                  {day}
+                </div>
+              ))}
+            </div>
+
+            {/* Calendar days */}
+            <div className="grid grid-cols-7 gap-1">
+              {calendarDays.map((date, index) => {
+                if (!date) {
+                  return <div key={`empty-${index}`} className="aspect-square" />;
+                }
+
+                const normalizedDate = normalizeDate(date);
+                const normalizedStart = normalizeDate(selectedStart);
+                const normalizedEnd = normalizeDate(selectedEnd);
+                
+                const isStart = normalizedDate && normalizedStart && 
+                                normalizedDate.getTime() === normalizedStart.getTime();
+                const isEnd = normalizedDate && normalizedEnd && 
+                              normalizedDate.getTime() === normalizedEnd.getTime();
+                const inRange = isDateInRange(date);
+                const inHoverRange = isDateInHoverRange(date);
+                
+                // Determine rounded corners for range styling
+                const prevDay = new Date(date);
+                prevDay.setDate(prevDay.getDate() - 1);
+                const nextDay = new Date(date);
+                nextDay.setDate(nextDay.getDate() + 1);
+                
+                const isRangeStart = isStart || (inRange && !isDateInRange(prevDay));
+                const isRangeEnd = isEnd || (inRange && !isDateInRange(nextDay));
+
+                return (
+                  <button
+                    key={date.getTime()}
+                    type="button"
+                    onClick={() => handleDateClick(date)}
+                    onMouseEnter={() => setHoverDate(date)}
+                    onMouseLeave={() => setHoverDate(null)}
+                    className={`
+                      aspect-square flex items-center justify-center text-sm font-medium
+                      transition-all duration-150 ease-in-out
+                      ${isStart || isEnd
+                        ? 'bg-emerald-600 text-white hover:bg-emerald-700 font-semibold rounded-full z-10'
+                        : inRange
+                        ? 'bg-emerald-100 text-emerald-900 hover:bg-emerald-200'
+                        : inHoverRange && !selectedEnd
+                        ? 'bg-gray-100 text-gray-900'
+                        : 'text-gray-700 hover:bg-gray-100'
+                      }
+                      ${isRangeStart && inRange && !isStart
+                        ? 'rounded-l-full'
+                        : ''
+                      }
+                      ${isRangeEnd && inRange && !isEnd
+                        ? 'rounded-r-full'
+                        : ''
+                      }
+                      ${!inRange && !inHoverRange && !isStart && !isEnd
+                        ? 'rounded-lg'
+                        : ''
+                      }
+                    `}
+                  >
+                    {date.getDate()}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Checkbox at bottom left */}
           <div className="flex items-center">
             <input
               type="checkbox"
@@ -153,49 +353,11 @@ const ReportDateRangeModal = ({
               Use date range filter
             </label>
           </div>
-
-          <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${!dateRange.enabled ? 'opacity-50' : ''}`}>
-            <div>
-              <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-1">
-                Start Date
-              </label>
-              <div className="relative rounded-md shadow-sm">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <FaCalendarAlt className="h-4 w-4 text-gray-400" />
-                </div>
-                <input
-                  type="date"
-                  id="startDate"
-                  value={dateRange.startDate ? formatDateForInput(dateRange.startDate) : ''}
-                  onChange={(e) => handleDateChange('startDate', e.target.value)}
-                  disabled={!dateRange.enabled}
-                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 sm:text-sm disabled:bg-gray-100"
-                />
-              </div>
-            </div>
-            <div>
-              <label htmlFor="endDate" className="block text-sm font-medium text-gray-700 mb-1">
-                End Date
-              </label>
-              <div className="relative rounded-md shadow-sm">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <FaCalendarAlt className="h-4 w-4 text-gray-400" />
-                </div>
-                <input
-                  type="date"
-                  id="endDate"
-                  value={dateRange.endDate ? formatDateForInput(dateRange.endDate) : ''}
-                  onChange={(e) => handleDateChange('endDate', e.target.value)}
-                  disabled={!dateRange.enabled}
-                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 sm:text-sm disabled:bg-gray-100"
-                />
-              </div>
-            </div>
-          </div>
         </div>
 
+        {/* Validation message */}
         {dateRange.enabled && dateRange.startDate && dateRange.endDate && dateRange.startDate > dateRange.endDate && (
-          <div className="text-red-600 text-sm mt-2">
+          <div className="text-red-600 text-sm">
             End date cannot be before start date
           </div>
         )}

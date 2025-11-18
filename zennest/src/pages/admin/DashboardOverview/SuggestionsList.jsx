@@ -4,10 +4,76 @@ import SectionHeader from '../components/SectionHeader';
 import { FaInfoCircle, FaFilePdf, FaPrint } from 'react-icons/fa';
 import { generatePDFReport, printReport } from '../lib/reportUtils';
 import { motion } from 'framer-motion';
+import ReportDateRangeModal from '../../../components/modals/ReportDateRangeModal';
 
 const SuggestionsList = ({ suggestions, showToast }) => {
-  const handleExportPDF = () => {
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportRange, setReportRange] = useState({
+    startDate: null,
+    endDate: null,
+    enabled: false
+  });
+
+  const handleExportPDF = (range = null) => {
     try {
+      // Helper function to normalize dates
+      const normalizeDateForFilter = (date) => {
+        if (!date) return null;
+        const d = new Date(date);
+        d.setHours(0, 0, 0, 0);
+        return d;
+      };
+
+      // Helper function to check if suggestion createdAt falls within report date range
+      const isWithinReportDateRange = (suggestion) => {
+        if (!range || !range.enabled) return true;
+        if (!range.startDate && !range.endDate) return true;
+
+        const createdAt = suggestion.createdAt ? new Date(suggestion.createdAt) : null;
+        if (!createdAt) return false;
+
+        const itemDate = normalizeDateForFilter(createdAt);
+        const startDate = range.startDate ? normalizeDateForFilter(range.startDate) : null;
+        const endDate = range.endDate ? normalizeDateForFilter(range.endDate) : null;
+
+        if (startDate && !endDate) {
+          return itemDate >= startDate;
+        }
+
+        if (!startDate && endDate) {
+          return itemDate <= endDate;
+        }
+
+        if (startDate && endDate) {
+          return itemDate >= startDate && itemDate <= endDate;
+        }
+
+        return true;
+      };
+
+      // Filter suggestions based on report date range if enabled
+      let dataToExport = [...suggestions];
+      if (range && range.enabled) {
+        dataToExport = suggestions.filter(suggestion => isWithinReportDateRange(suggestion));
+      }
+
+      // Build date range label for report
+      let reportDateRangeLabel = '';
+      if (range && range.enabled && (range.startDate || range.endDate)) {
+        const formatDate = (date) => {
+          if (!date) return 'Any';
+          const d = new Date(date);
+          return d.toLocaleDateString('en-US', { 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric' 
+          });
+        };
+        const startLabel = range.startDate ? formatDate(range.startDate) : 'Any';
+        const endLabel = range.endDate ? formatDate(range.endDate) : 'Any';
+        reportDateRangeLabel = ` (${startLabel} to ${endLabel})`;
+      }
+
       const columns = [
         { key: 'guestName', label: 'Guest', width: 2 },
         { key: 'listingTitle', label: 'Listing', width: 2 },
@@ -15,7 +81,7 @@ const SuggestionsList = ({ suggestions, showToast }) => {
         { key: 'createdAt', label: 'Date', width: 2 }
       ];
 
-      const rows = suggestions.map(s => ({
+      const rows = dataToExport.map(s => ({
         guestName: s.guestName || 'Guest',
         listingTitle: s.listingTitle || 'Unknown',
         suggestion: s.suggestion || '',
@@ -24,15 +90,17 @@ const SuggestionsList = ({ suggestions, showToast }) => {
 
       generatePDFReport({
         type: 'suggestions',
-        title: 'Guest Suggestions Report',
+        title: `Guest Suggestions Report${reportDateRangeLabel}`,
         rows,
         columns,
         meta: {
-          generatedBy: 'Admin Dashboard'
+          generatedBy: 'Admin Dashboard',
+          dateRange: reportDateRangeLabel,
+          totalRecords: dataToExport.length
         }
       });
 
-      showToast('PDF report generated successfully');
+      showToast(`PDF report generated successfully (${dataToExport.length} ${dataToExport.length !== 1 ? 'records' : 'record'})`);
     } catch (error) {
       console.error('Error exporting suggestions PDF:', error);
       showToast('Failed to generate PDF report', 'error');
@@ -82,11 +150,11 @@ const SuggestionsList = ({ suggestions, showToast }) => {
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            onClick={handleExportPDF}
+            onClick={() => setShowReportModal(true)}
             className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-xs sm:text-sm flex items-center justify-center gap-2"
           >
             <FaFilePdf className="text-xs sm:text-sm" />
-            <span className="hidden sm:inline">Export PDF</span>
+            <span className="hidden sm:inline">Generate PDF Report</span>
             <span className="sm:hidden">PDF</span>
           </motion.button>
           <motion.button
@@ -135,6 +203,31 @@ const SuggestionsList = ({ suggestions, showToast }) => {
           </tbody>
         </table>
       </div>
+
+      {/* Report Date Range Modal */}
+      <ReportDateRangeModal
+        isOpen={showReportModal}
+        initialRange={reportRange}
+        onClose={() => setShowReportModal(false)}
+        onGenerate={(range) => {
+          // Validate date range if enabled
+          if (range.enabled && range.startDate && range.endDate) {
+            const start = new Date(range.startDate);
+            const end = new Date(range.endDate);
+            start.setHours(0, 0, 0, 0);
+            end.setHours(0, 0, 0, 0);
+            
+            if (start > end) {
+              showToast('End date cannot be before start date', 'error');
+              return;
+            }
+          }
+          
+          setReportRange(range);
+          handleExportPDF(range);
+          setShowReportModal(false);
+        }}
+      />
     </div>
   );
 };

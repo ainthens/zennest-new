@@ -5,6 +5,7 @@ import { FaCalendarAlt, FaFilePdf, FaPrint } from 'react-icons/fa';
 import { generatePDFReport, printReport } from '../lib/reportUtils';
 import { motion } from 'framer-motion';
 import { parseDate } from '../../../utils/dateUtils';
+import ReportDateRangeModal from '../../../components/modals/ReportDateRangeModal';
 
 const RecentBookingsList = ({ bookings, showToast }) => {
   const [statusFilter, setStatusFilter] = useState('all');
@@ -12,6 +13,12 @@ const RecentBookingsList = ({ bookings, showToast }) => {
   // NEW: Date range filter states
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportRange, setReportRange] = useState({
+    startDate: null,
+    endDate: null,
+    enabled: false
+  });
 
   // Helper: robust date parser that falls back to multiple formats
   const toDate = (value) => {
@@ -143,8 +150,50 @@ const RecentBookingsList = ({ bookings, showToast }) => {
   }, [bookings, statusFilter, startDate, endDate]); // re-run when these change
 
   // Export PDF
-  const handleExportPDF = () => {
+  const handleExportPDF = (range = null) => {
     try {
+      // Helper function to normalize dates
+      const normalizeDateForFilter = (date) => {
+        if (!date) return null;
+        const d = toDate(date);
+        if (!d) return null;
+        d.setHours(0, 0, 0, 0);
+        return d;
+      };
+
+      // Helper function to check if booking falls within report date range
+      const isWithinReportDateRange = (booking) => {
+        if (!range || !range.enabled) return true;
+        if (!range.startDate && !range.endDate) return true;
+
+        // Use createdAt for filtering
+        const createdAt = booking.createdAt ? normalizeDateForFilter(booking.createdAt) : null;
+        if (!createdAt) return false;
+
+        const startDate = range.startDate ? normalizeDateForFilter(range.startDate) : null;
+        const endDate = range.endDate ? normalizeDateForFilter(range.endDate) : null;
+
+        if (startDate && !endDate) {
+          return createdAt >= startDate;
+        }
+
+        if (!startDate && endDate) {
+          return createdAt <= endDate;
+        }
+
+        if (startDate && endDate) {
+          return createdAt >= startDate && createdAt <= endDate;
+        }
+
+        return true;
+      };
+
+      // Filter bookings based on report date range if enabled
+      let dataToExport = [...filteredBookings];
+      if (range && range.enabled) {
+        dataToExport = filteredBookings.filter(booking => isWithinReportDateRange(booking));
+      }
+
       const filterLabel =
         statusFilter === 'all' ? 'All Bookings' :
         statusFilter === 'completed' ? 'Completed Bookings' :
@@ -152,6 +201,23 @@ const RecentBookingsList = ({ bookings, showToast }) => {
         statusFilter === 'pending' ? 'Pending Bookings' :
         statusFilter === 'upcoming' ? 'Upcoming Bookings' :
         `${statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)} Bookings`;
+
+      // Build date range label for report
+      let reportDateRangeLabel = '';
+      if (range && range.enabled && (range.startDate || range.endDate)) {
+        const formatDate = (date) => {
+          if (!date) return 'Any';
+          const d = new Date(date);
+          return d.toLocaleDateString('en-US', { 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric' 
+          });
+        };
+        const startLabel = range.startDate ? formatDate(range.startDate) : 'Any';
+        const endLabel = range.endDate ? formatDate(range.endDate) : 'Any';
+        reportDateRangeLabel = ` (${startLabel} to ${endLabel})`;
+      }
 
       const columns = [
         { key: 'bookingId', label: 'Booking ID', width: 1.2 },
@@ -163,7 +229,7 @@ const RecentBookingsList = ({ bookings, showToast }) => {
         { key: 'total', label: 'Total', width: 1.2 }
       ];
 
-      const rows = filteredBookings.map(b => {
+      const rows = dataToExport.map(b => {
         const guestName = b.guestName || b.guestEmail || 'Guest';
         const guestEmail = b.guestEmail ? `\n${b.guestEmail}` : '';
         return {
@@ -179,17 +245,18 @@ const RecentBookingsList = ({ bookings, showToast }) => {
 
       generatePDFReport({
         type: 'admin-recent-bookings',
-        title: filterLabel,
+        title: `${filterLabel}${reportDateRangeLabel}`,
         rows,
         columns,
         meta: {
           generatedBy: 'Admin Dashboard',
           filter: filterLabel,
-          totalRecords: filteredBookings.length
+          dateRange: reportDateRangeLabel,
+          totalRecords: dataToExport.length
         }
       });
 
-      showToast('PDF report generated successfully');
+      showToast(`PDF report generated successfully (${dataToExport.length} ${dataToExport.length !== 1 ? 'records' : 'record'})`);
     } catch (error) {
       console.error('Error exporting bookings PDF:', error);
       showToast('Failed to generate PDF report', 'error');
@@ -266,11 +333,11 @@ const RecentBookingsList = ({ bookings, showToast }) => {
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              onClick={handleExportPDF}
+              onClick={() => setShowReportModal(true)}
               className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-xs sm:text-sm flex items-center justify-center gap-2"
             >
               <FaFilePdf className="text-xs sm:text-sm" />
-              <span className="hidden sm:inline">Export PDF</span>
+              <span className="hidden sm:inline">Generate PDF Report</span>
               <span className="sm:hidden">PDF</span>
             </motion.button>
 
@@ -420,6 +487,31 @@ const RecentBookingsList = ({ bookings, showToast }) => {
           </tbody>
         </table>
       </div>
+
+      {/* Report Date Range Modal */}
+      <ReportDateRangeModal
+        isOpen={showReportModal}
+        initialRange={reportRange}
+        onClose={() => setShowReportModal(false)}
+        onGenerate={(range) => {
+          // Validate date range if enabled
+          if (range.enabled && range.startDate && range.endDate) {
+            const start = new Date(range.startDate);
+            const end = new Date(range.endDate);
+            start.setHours(0, 0, 0, 0);
+            end.setHours(0, 0, 0, 0);
+            
+            if (start > end) {
+              showToast('End date cannot be before start date', 'error');
+              return;
+            }
+          }
+          
+          setReportRange(range);
+          handleExportPDF(range);
+          setShowReportModal(false);
+        }}
+      />
     </div>
   );
 };

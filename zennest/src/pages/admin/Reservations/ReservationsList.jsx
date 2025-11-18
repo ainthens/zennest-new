@@ -2,11 +2,14 @@
 import { useEffect, useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import SectionHeader from '../components/SectionHeader';
-import { FaBook, FaFilePdf, FaPrint, FaChevronLeft, FaChevronRight, FaFilter, FaSync } from 'react-icons/fa';
+import { FaBook, FaFilePdf, FaPrint, FaChevronLeft, FaChevronRight, FaFilter, FaSync, FaCalendarAlt } from 'react-icons/fa';
 import { useReservationsPagination } from './useReservationsPagination';
 import ReservationRow from './ReservationRow';
 import { generatePDFReport, printReport } from '../lib/reportUtils';
 import { parseDate } from '../../../utils/dateUtils';
+import ReportDateRangeModal from '../../../components/modals/ReportDateRangeModal';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
 
 const ReservationsList = ({ showToast }) => {
   const [statusFilter, setStatusFilter] = useState('all');
@@ -14,7 +17,14 @@ const ReservationsList = ({ showToast }) => {
     startDate: '',
     endDate: ''
   });
+  const [calendarDateRange, setCalendarDateRange] = useState([null, null]);
   const [localLoading, setLocalLoading] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportRange, setReportRange] = useState({
+    startDate: null,
+    endDate: null,
+    enabled: false
+  });
   
   const {
     bookings,
@@ -33,6 +43,7 @@ const ReservationsList = ({ showToast }) => {
 
   // Effect to handle date range changes and fetch data
   useEffect(() => {
+    // Validate dates if both are provided
     if (dateRange.startDate && dateRange.endDate) {
       const start = parseDate(dateRange.startDate);
       const end = parseDate(dateRange.endDate);
@@ -41,8 +52,11 @@ const ReservationsList = ({ showToast }) => {
         showToast('End date cannot be before start date', 'error');
         return;
       }
+    }
 
-      // Trigger reset to fetch data with new date range
+    // Trigger reset to fetch data when date range changes (either date)
+    // The filtering happens client-side in filteredBookings
+    if (dateRange.startDate || dateRange.endDate) {
       setLocalLoading(true);
       reset().finally(() => {
         setLocalLoading(false);
@@ -51,10 +65,11 @@ const ReservationsList = ({ showToast }) => {
   }, [dateRange.startDate, dateRange.endDate, reset, showToast]);
 
   // Helper function to format dates
-  const formatDate = (date) => {
-    if (!date) return 'N/A';
-    const dateObj = date?.toDate ? date.toDate() : new Date(date);
-    if (isNaN(dateObj.getTime())) return 'N/A';
+  // Uses parseDate utility to handle Firestore Timestamps, Date objects, and date strings
+  const formatDate = (dateValue) => {
+    if (!dateValue) return 'N/A';
+    const dateObj = parseDate(dateValue);
+    if (!dateObj || isNaN(dateObj.getTime())) return 'N/A';
     return dateObj.toLocaleDateString('en-US', { 
       year: 'numeric', 
       month: 'short', 
@@ -63,32 +78,60 @@ const ReservationsList = ({ showToast }) => {
   };
 
   // Helper function to normalize dates (remove time component)
-  const normalizeDate = (date) => {
-    const d = new Date(date);
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  // Properly handles Firestore Timestamps, Date objects, and date strings
+  const normalizeDate = (dateValue) => {
+    if (!dateValue) return null;
+    
+    // Use parseDate utility to handle Firestore Timestamps, Date objects, ISO strings, etc.
+    const parsed = parseDate(dateValue);
+    if (!parsed) return null;
+    
+    // Normalize to start of day (midnight) for accurate date-only comparisons
+    // This avoids timezone issues when comparing dates
+    const year = parsed.getFullYear();
+    const month = parsed.getMonth();
+    const day = parsed.getDate();
+    return new Date(year, month, day, 0, 0, 0, 0);
+  };
+
+  // Helper function to normalize end dates to end of day (23:59:59)
+  const normalizeEndDate = (dateValue) => {
+    if (!dateValue) return null;
+    
+    const parsed = parseDate(dateValue);
+    if (!parsed) return null;
+    
+    // Normalize to end of day for inclusive end date comparisons
+    const year = parsed.getFullYear();
+    const month = parsed.getMonth();
+    const day = parsed.getDate();
+    return new Date(year, month, day, 23, 59, 59, 999);
   };
 
   // Helper function to check if booking falls within date range
   const isWithinDateRange = (booking) => {
     if (!dateRange.startDate && !dateRange.endDate) return true;
     
+    // Parse booking dates using the parseDate utility
     const checkIn = booking.checkIn ? normalizeDate(booking.checkIn) : null;
-    const checkOut = booking.checkOut ? normalizeDate(booking.checkOut) : null;
+    const checkOut = booking.checkOut ? normalizeEndDate(booking.checkOut) : null;
     
     if (!checkIn) return false;
 
+    // Parse filter dates
     const startDate = dateRange.startDate ? normalizeDate(dateRange.startDate) : null;
-    const endDate = dateRange.endDate ? normalizeDate(dateRange.endDate) : null;
+    const endDate = dateRange.endDate ? normalizeEndDate(dateRange.endDate) : null;
 
     // Case 1: Only start date provided - show bookings with check-in on or after start date
     if (startDate && !endDate) {
       return checkIn >= startDate;
     }
 
-    // Case 2: Only end date provided - show bookings with check-out on or before end date
+    // Case 2: Only end date provided - show bookings that start on or before end date
+    // (bookings that have started by the end date)
     if (!startDate && endDate) {
-      const bookingEndDate = checkOut || checkIn;
-      return bookingEndDate <= endDate;
+      // Booking starts on or before the end date
+      return checkIn <= endDate;
     }
 
     // Case 3: Both dates provided - show bookings that overlap with the date range
@@ -97,13 +140,12 @@ const ReservationsList = ({ showToast }) => {
       
       // Check if booking overlaps with the date range
       // Booking overlaps if:
-      // - Check-in is within the range OR
-      // - Check-out is within the range OR  
-      // - Booking spans the entire range (check-in before start and check-out after end)
+      // - Check-in is within the range [startDate, endDate] OR
+      // - Check-out is within the range [startDate, endDate] OR  
+      // - Booking spans the entire range (check-in <= startDate AND bookingEndDate >= endDate)
+      // Overlap logic: booking starts before range ends AND booking ends after range starts
       return (
-        (checkIn >= startDate && checkIn <= endDate) || // Check-in within range
-        (bookingEndDate >= startDate && bookingEndDate <= endDate) || // Check-out within range
-        (checkIn <= startDate && bookingEndDate >= endDate) // Booking spans entire range
+        checkIn <= endDate && bookingEndDate >= startDate
       );
     }
 
@@ -186,8 +228,55 @@ const ReservationsList = ({ showToast }) => {
     return filtered;
   }, [bookings, statusFilter, dateRange]);
 
-  const handleExportPDF = () => {
+  const handleExportPDF = (range = null) => {
     try {
+      // Helper function to normalize dates (remove time component)
+      const normalizeDateForFilter = (date) => {
+        if (!date) return null;
+        const d = new Date(date);
+        d.setHours(0, 0, 0, 0);
+        return d;
+      };
+
+      // Helper function to check if booking createdAt falls within report date range
+      const isWithinReportDateRange = (booking) => {
+        if (!range || !range.enabled) return true;
+        if (!range.startDate && !range.endDate) return true;
+
+        const createdAt = booking.createdAt ? 
+          (booking.createdAt?.toDate ? booking.createdAt.toDate() : new Date(booking.createdAt)) : 
+          null;
+        
+        if (!createdAt) return false;
+
+        const bookingDate = normalizeDateForFilter(createdAt);
+        const startDate = range.startDate ? normalizeDateForFilter(range.startDate) : null;
+        const endDate = range.endDate ? normalizeDateForFilter(range.endDate) : null;
+
+        // Case 1: Only start date provided
+        if (startDate && !endDate) {
+          return bookingDate >= startDate;
+        }
+
+        // Case 2: Only end date provided
+        if (!startDate && endDate) {
+          return bookingDate <= endDate;
+        }
+
+        // Case 3: Both dates provided
+        if (startDate && endDate) {
+          return bookingDate >= startDate && bookingDate <= endDate;
+        }
+
+        return true;
+      };
+
+      // Filter bookings based on report date range if enabled
+      let dataToExport = [...filteredBookings];
+      if (range && range.enabled) {
+        dataToExport = filteredBookings.filter(booking => isWithinReportDateRange(booking));
+      }
+
       const columns = [
         { key: 'bookingId', label: 'Booking ID', width: 1.2 },
         { key: 'guestName', label: 'Guest', width: 2.5 },
@@ -205,11 +294,19 @@ const ReservationsList = ({ showToast }) => {
         return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
       };
 
-      const dateRangeLabel = dateRange.startDate || dateRange.endDate ? 
+      // Build date range label for report
+      let reportDateRangeLabel = '';
+      if (range && range.enabled && (range.startDate || range.endDate)) {
+        const startLabel = range.startDate ? formatDate(range.startDate) : 'Any';
+        const endLabel = range.endDate ? formatDate(range.endDate) : 'Any';
+        reportDateRangeLabel = ` (${startLabel} to ${endLabel})`;
+      }
+
+      const displayDateRangeLabel = dateRange.startDate || dateRange.endDate ? 
         ` (${dateRange.startDate ? formatDate(dateRange.startDate) : 'Any'} to ${dateRange.endDate ? formatDate(dateRange.endDate) : 'Any'})` : 
         '';
 
-      const rows = filteredBookings.map(b => {
+      const rows = dataToExport.map(b => {
         const paymentStatus = getPaymentStatus(b);
         return {
           bookingId: b.id?.substring(0, 8) || 'N/A',
@@ -230,20 +327,23 @@ const ReservationsList = ({ showToast }) => {
                           statusFilter === 'cancelled' ? 'Cancelled Reservations' :
                           `${statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)} Reservations`;
 
+      // Use report date range label if provided, otherwise use display date range label
+      const finalDateRangeLabel = reportDateRangeLabel || displayDateRangeLabel;
+
       generatePDFReport({
         type: 'reservations',
-        title: `${filterLabel}${dateRangeLabel}`,
+        title: `${filterLabel}${finalDateRangeLabel}`,
         rows,
         columns,
         meta: {
           generatedBy: 'Admin Dashboard',
           filter: filterLabel,
-          dateRange: dateRangeLabel,
-          totalRecords: filteredBookings.length
+          dateRange: finalDateRangeLabel,
+          totalRecords: dataToExport.length
         }
       });
 
-      showToast(`PDF report generated successfully (${filteredBookings.length} ${filteredBookings.length === 1 ? 'record' : 'records'})`);
+      showToast(`PDF report generated successfully (${dataToExport.length} ${dataToExport.length !== 1 ? 'records' : 'record'})`);
     } catch (error) {
       console.error('Error exporting reservations PDF:', error);
       showToast('Failed to generate PDF report', 'error');
@@ -318,6 +418,7 @@ const ReservationsList = ({ showToast }) => {
 
   const clearDateRange = () => {
     setDateRange({ startDate: '', endDate: '' });
+    setCalendarDateRange([null, null]);
     setLocalLoading(true);
     reset().finally(() => {
       setLocalLoading(false);
@@ -329,6 +430,39 @@ const ReservationsList = ({ showToast }) => {
       ...prev,
       [type]: value
     }));
+  };
+
+  // Handle calendar date range change
+  const handleCalendarDateChange = (dates) => {
+    const [start, end] = dates || [null, null];
+    setCalendarDateRange([start, end]);
+    
+    // Update the dateRange state to match
+    if (start) {
+      const startDateStr = start.toISOString().split('T')[0];
+      setDateRange(prev => ({
+        ...prev,
+        startDate: startDateStr
+      }));
+    } else {
+      setDateRange(prev => ({
+        ...prev,
+        startDate: ''
+      }));
+    }
+    
+    if (end) {
+      const endDateStr = end.toISOString().split('T')[0];
+      setDateRange(prev => ({
+        ...prev,
+        endDate: endDateStr
+      }));
+    } else {
+      setDateRange(prev => ({
+        ...prev,
+        endDate: ''
+      }));
+    }
   };
 
   const isFetching = loading || localLoading;
@@ -350,12 +484,12 @@ const ReservationsList = ({ showToast }) => {
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            onClick={handleExportPDF}
+            onClick={() => setShowReportModal(true)}
             disabled={isFetching}
             className="px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-xs sm:text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FaFilePdf className="text-xs sm:text-sm" />
-            <span className="hidden sm:inline">Export PDF</span>
+            <span className="hidden sm:inline">Generate PDF Report</span>
             <span className="sm:hidden">PDF</span>
           </motion.button>
           <motion.button
@@ -394,27 +528,39 @@ const ReservationsList = ({ showToast }) => {
             </select>
           </div>
 
-          {/* Date Range Filter */}
+          {/* Date Range Filter with Calendar */}
           <div className="lg:col-span-2">
             <label className="block text-xs font-semibold text-gray-700 mb-2">Date Range</label>
             <div className="flex gap-2 items-end">
-              <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <input
-                  type="date"
-                  value={dateRange.startDate}
-                  onChange={(e) => handleDateChange('startDate', e.target.value)}
+              <div className="flex-1 relative">
+                <DatePicker
+                  selected={calendarDateRange[0]}
+                  onChange={handleCalendarDateChange}
+                  startDate={calendarDateRange[0]}
+                  endDate={calendarDateRange[1]}
+                  selectsRange
+                  dateFormat="MMM dd, yyyy"
+                  placeholderText="Click to select date range"
+                  className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={isFetching}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                  placeholder="Start date"
+                  calendarClassName="z-50"
+                  popperPlacement="bottom-start"
+                  showPopperArrow={false}
+                  popperModifiers={[
+                    {
+                      name: "offset",
+                      options: {
+                        offset: [0, 8],
+                      },
+                    },
+                  ]}
+                  wrapperClassName="w-full"
+                  isClearable
+                  shouldCloseOnSelect={false}
                 />
-                <input
-                  type="date"
-                  value={dateRange.endDate}
-                  onChange={(e) => handleDateChange('endDate', e.target.value)}
-                  disabled={isFetching}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                  placeholder="End date"
-                />
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                  <FaCalendarAlt className="w-4 h-4 text-gray-400" />
+                </div>
               </div>
               {(dateRange.startDate || dateRange.endDate) && (
                 <motion.button
@@ -428,6 +574,15 @@ const ReservationsList = ({ showToast }) => {
                 </motion.button>
               )}
             </div>
+            {(dateRange.startDate || dateRange.endDate) && (
+              <p className="mt-2 text-xs text-gray-500">
+                {dateRange.startDate && dateRange.endDate
+                  ? `${formatDate(dateRange.startDate)} - ${formatDate(dateRange.endDate)}`
+                  : dateRange.startDate
+                  ? `From ${formatDate(dateRange.startDate)}`
+                  : `Until ${formatDate(dateRange.endDate)}`}
+              </p>
+            )}
           </div>
         </div>
 
@@ -538,6 +693,31 @@ const ReservationsList = ({ showToast }) => {
           </>
         )}
       </div>
+
+      {/* Report Date Range Modal */}
+      <ReportDateRangeModal
+        isOpen={showReportModal}
+        initialRange={reportRange}
+        onClose={() => setShowReportModal(false)}
+        onGenerate={(range) => {
+          // Validate date range if enabled
+          if (range.enabled && range.startDate && range.endDate) {
+            const start = new Date(range.startDate);
+            const end = new Date(range.endDate);
+            start.setHours(0, 0, 0, 0);
+            end.setHours(0, 0, 0, 0);
+            
+            if (start > end) {
+              showToast('End date cannot be before start date', 'error');
+              return;
+            }
+          }
+          
+          setReportRange(range);
+          handleExportPDF(range);
+          setShowReportModal(false);
+        }}
+      />
     </motion.div>
   );
 };

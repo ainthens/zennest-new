@@ -6,11 +6,18 @@ import { FaUsers, FaFilePdf, FaPrint } from 'react-icons/fa';
 import { generatePDFReport, printReport } from '../lib/reportUtils';
 import HostRow from './HostRow';
 import GuestRow from './GuestRow';
+import ReportDateRangeModal from '../../../components/modals/ReportDateRangeModal';
 
 const UsersList = ({ hosts, guests, showToast }) => {
   const [activeTab, setActiveTab] = useState('guests');
   const [searchQuery, setSearchQuery] = useState('');
   const [verifiedFilter, setVerifiedFilter] = useState('all');
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportRange, setReportRange] = useState({
+    startDate: null,
+    endDate: null,
+    enabled: false
+  });
 
   // Filter guests
   const filteredGuests = useMemo(() => {
@@ -62,10 +69,70 @@ const UsersList = ({ hosts, guests, showToast }) => {
     return filtered;
   }, [hosts, searchQuery, verifiedFilter]);
 
-  const handleExportPDF = () => {
+  const handleExportPDF = (range = null) => {
     try {
-      const data = activeTab === 'guests' ? filteredGuests : filteredHosts;
+      // Helper function to normalize dates
+      const normalizeDateForFilter = (date) => {
+        if (!date) return null;
+        const d = new Date(date);
+        d.setHours(0, 0, 0, 0);
+        return d;
+      };
+
+      // Helper function to check if item createdAt falls within report date range
+      const isWithinReportDateRange = (item) => {
+        if (!range || !range.enabled) return true;
+        if (!range.startDate && !range.endDate) return true;
+
+        const createdAt = item.createdAt ? 
+          (item.createdAt?.toDate ? item.createdAt.toDate() : new Date(item.createdAt)) : 
+          null;
+        
+        if (!createdAt) return false;
+
+        const itemDate = normalizeDateForFilter(createdAt);
+        const startDate = range.startDate ? normalizeDateForFilter(range.startDate) : null;
+        const endDate = range.endDate ? normalizeDateForFilter(range.endDate) : null;
+
+        if (startDate && !endDate) {
+          return itemDate >= startDate;
+        }
+
+        if (!startDate && endDate) {
+          return itemDate <= endDate;
+        }
+
+        if (startDate && endDate) {
+          return itemDate >= startDate && itemDate <= endDate;
+        }
+
+        return true;
+      };
+
+      // Filter data based on report date range if enabled
+      let data = activeTab === 'guests' ? filteredGuests : filteredHosts;
+      if (range && range.enabled) {
+        data = data.filter(item => isWithinReportDateRange(item));
+      }
+
       const type = activeTab === 'guests' ? 'guests' : 'hosts';
+
+      // Build date range label for report
+      let reportDateRangeLabel = '';
+      if (range && range.enabled && (range.startDate || range.endDate)) {
+        const formatDate = (date) => {
+          if (!date) return 'Any';
+          const d = new Date(date);
+          return d.toLocaleDateString('en-US', { 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric' 
+          });
+        };
+        const startLabel = range.startDate ? formatDate(range.startDate) : 'Any';
+        const endLabel = range.endDate ? formatDate(range.endDate) : 'Any';
+        reportDateRangeLabel = ` (${startLabel} to ${endLabel})`;
+      }
 
       const columns = activeTab === 'guests' ? [
         { key: 'ranking', label: 'Rank', width: 0.5 },
@@ -132,15 +199,17 @@ const UsersList = ({ hosts, guests, showToast }) => {
 
       generatePDFReport({
         type,
-        title: `${activeTab === 'guests' ? 'Guests' : 'Hosts'} Report`,
+        title: `${activeTab === 'guests' ? 'Guests' : 'Hosts'} Report${reportDateRangeLabel}`,
         rows,
         columns,
         meta: {
-          generatedBy: 'Admin Dashboard'
+          generatedBy: 'Admin Dashboard',
+          dateRange: reportDateRangeLabel,
+          totalRecords: data.length
         }
       });
 
-      showToast('PDF report generated successfully');
+      showToast(`PDF report generated successfully (${data.length} ${data.length !== 1 ? 'records' : 'record'})`);
     } catch (error) {
       console.error('Error exporting users PDF:', error);
       showToast('Failed to generate PDF report', 'error');
@@ -283,11 +352,11 @@ const UsersList = ({ hosts, guests, showToast }) => {
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={handleExportPDF}
+                onClick={() => setShowReportModal(true)}
                 className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold text-xs sm:text-sm flex items-center justify-center gap-2"
               >
                 <FaFilePdf className="text-xs sm:text-sm" />
-                <span className="hidden sm:inline">Export PDF</span>
+                <span className="hidden sm:inline">Generate PDF Report</span>
                 <span className="sm:hidden">PDF</span>
               </motion.button>
               <motion.button
@@ -361,6 +430,31 @@ const UsersList = ({ hosts, guests, showToast }) => {
           </table>
         </div>
       </div>
+
+      {/* Report Date Range Modal */}
+      <ReportDateRangeModal
+        isOpen={showReportModal}
+        initialRange={reportRange}
+        onClose={() => setShowReportModal(false)}
+        onGenerate={(range) => {
+          // Validate date range if enabled
+          if (range.enabled && range.startDate && range.endDate) {
+            const start = new Date(range.startDate);
+            const end = new Date(range.endDate);
+            start.setHours(0, 0, 0, 0);
+            end.setHours(0, 0, 0, 0);
+            
+            if (start > end) {
+              showToast('End date cannot be before start date', 'error');
+              return;
+            }
+          }
+          
+          setReportRange(range);
+          handleExportPDF(range);
+          setShowReportModal(false);
+        }}
+      />
     </motion.div>
   );
 };

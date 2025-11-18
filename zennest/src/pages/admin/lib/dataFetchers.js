@@ -641,10 +641,8 @@ async function computeTransactionsFromBookings({ dateFrom, dateTo, status, hostI
     bookingsSnapshot.forEach(doc => {
       const booking = doc.data();
       
-      // Skip cancelled or refunded bookings (these don't generate transactions)
-      if (booking.status === 'cancelled' || booking.status === 'refunded') {
-        return;
-      }
+      // Check if booking is cancelled or refunded
+      const isCancelled = booking.status === 'cancelled' || booking.status === 'refunded';
       
       // Check if payment was received/completed
       // Payment is considered completed if:
@@ -656,8 +654,9 @@ async function computeTransactionsFromBookings({ dateFrom, dateTo, status, hostI
                               (booking.total && booking.total > 0 && 
                                (booking.status === 'confirmed' || booking.status === 'completed' || booking.payoutProcessed));
       
-      // Include all bookings with payment (regardless of final status, as long as payment was received)
-      if (paymentCompleted) {
+      // Include all bookings with payment (including cancelled ones for tracking refunds/reversals)
+      // Also include cancelled bookings even without payment to track cancellations
+      if (paymentCompleted || isCancelled) {
         // Use payment date if available, otherwise use booking creation/update date
         const transactionDate = parseDate(booking.paidAt) || 
                                parseDate(booking.updatedAt) || 
@@ -665,10 +664,11 @@ async function computeTransactionsFromBookings({ dateFrom, dateTo, status, hostI
                                new Date();
         
         // Use actual paid amount if available, otherwise use booking total
+        // For cancelled bookings, still include them even with 0 total to track cancellations
         const bookingTotal = parseFloat(booking.paidAmount || booking.total || 0);
         
-        // Skip if total is 0 or invalid
-        if (!bookingTotal || bookingTotal <= 0) {
+        // Skip if total is 0 or invalid (unless it's a cancelled booking)
+        if ((!bookingTotal || bookingTotal <= 0) && !isCancelled) {
           return;
         }
         
@@ -683,16 +683,56 @@ async function computeTransactionsFromBookings({ dateFrom, dateTo, status, hostI
                         'Guest';
         const hostName = booking.hostName || hostMap[booking.hostId] || 'Host';
 
-        // Determine transaction status based on booking state
+        // Determine transaction status based on booking dates and status
         let transactionStatus = 'pending';
-        if (booking.payoutProcessed) {
-          transactionStatus = 'completed'; // Payout already processed
-        } else if (booking.status === 'completed') {
-          transactionStatus = 'completed'; // Booking completed, payout ready
-        } else if (booking.status === 'confirmed') {
-          transactionStatus = 'pending'; // Payment received, awaiting completion
-        } else if (booking.status === 'cancelled' || booking.status === 'refunded') {
-          transactionStatus = 'refunded'; // Should not reach here due to early return, but just in case
+        const now = new Date();
+        
+        // Helper function to determine if booking is active, completed, or upcoming
+        const getBookingTimelineStatus = () => {
+          // Handle bookings without dates (services/experiences)
+          if (!booking.checkIn || !booking.checkOut) {
+            if (booking.status === 'confirmed' || booking.status === 'completed') {
+              return 'active'; // Service/experience is active or completed
+            }
+            if (booking.status === 'pending' || booking.status === 'reserved') {
+              return 'upcoming'; // Service/experience is upcoming
+            }
+            return 'completed'; // Default to completed for services without dates
+          }
+          
+          const checkIn = parseDate(booking.checkIn);
+          const checkOut = parseDate(booking.checkOut);
+          
+          if (!checkIn || !checkOut) {
+            // If dates are invalid, use booking status
+            if (booking.status === 'confirmed' || booking.status === 'completed') {
+              return 'active';
+            }
+            return 'upcoming';
+          }
+          
+          // Determine status based on dates
+          if (now < checkIn) {
+            return 'upcoming'; // Check-in is in the future
+          } else if (now >= checkIn && now <= checkOut) {
+            return 'active'; // Currently between check-in and check-out
+          } else {
+            return 'completed'; // Check-out has passed
+          }
+        };
+        
+        const timelineStatus = getBookingTimelineStatus();
+        
+        // Set transaction status based on booking status first
+        // If booking is cancelled or refunded, mark as cancelled
+        if (isCancelled) {
+          transactionStatus = 'cancelled';
+        } else if (timelineStatus === 'active' || timelineStatus === 'completed') {
+          // If booking is active or completed → payment status is 'completed'
+          transactionStatus = 'completed';
+        } else if (timelineStatus === 'upcoming') {
+          // If booking is upcoming → payment status is 'pending'
+          transactionStatus = 'pending';
         }
 
         transactions.push({
