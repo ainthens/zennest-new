@@ -13,28 +13,85 @@ const ReservationRow = ({ booking }) => {
   const createdAt = parseDate(booking.createdAt);
 
   // Helper function to determine payment status
+  // Simplified to match the 3 main statuses: completed, pending (for upcoming), cancelled
   const getPaymentStatus = (booking) => {
+    // If booking is cancelled or refunded, payment status is also cancelled
+    if (booking.status === 'cancelled' || booking.status === 'refunded') {
+      return 'cancelled';
+    }
+    
+    // Check if booking is upcoming (check-in date is in the future)
+    // If upcoming, payment status should always be pending, even if payment was processed
+    if (checkIn) {
+      const now = new Date();
+      if (now < checkIn) {
+        return 'pending'; // Always pending for upcoming bookings
+      }
+    }
+    
     // Payment is "completed" if paymentStatus is 'completed' or paidAmount exists
     if (booking.paymentStatus === 'completed' || booking.paidAmount !== undefined) {
       return 'completed';
     }
     
-    // Payment is "pending" if paymentStatus is 'pending' or 'scheduled'
-    if (booking.paymentStatus === 'pending' || booking.paymentStatus === 'scheduled') {
-      return 'pending';
+    // For all other cases (pending, scheduled), payment is pending
+    return 'pending';
+  };
+
+  // Helper function to determine booking status
+  // Simplified to 3 statuses: completed, upcoming, cancelled
+  const getBookingStatus = (booking) => {
+    // First check: If booking is cancelled or refunded, status is cancelled
+    if (booking.status === 'cancelled' || booking.status === 'refunded') {
+      return 'cancelled';
     }
     
-    // If booking status is upcoming (check-in in future), payment is also upcoming
+    // Get payment status
+    const paymentStatus = getPaymentStatus(booking);
+    
+    // Handle bookings without dates (services/experiences)
+    if (!booking.checkIn || !booking.checkOut) {
+      if (paymentStatus === 'completed') {
+        return 'completed';
+      } else if (paymentStatus === 'cancelled') {
+        return 'cancelled';
+      } else {
+        return 'upcoming'; // Pending payment = upcoming
+      }
+    }
+    
     const now = new Date();
-    if (checkIn && now < checkIn) {
-      return 'upcoming';
-    }
+    const checkInDate = parseDate(booking.checkIn);
+    const checkOutDate = parseDate(booking.checkOut);
     
-    // Default to pending if no payment status
-    return booking.paymentStatus || 'pending';
+    if (!checkInDate || !checkOutDate) {
+      // Invalid dates - use payment status to determine
+      if (paymentStatus === 'completed') {
+        return 'completed';
+      } else if (paymentStatus === 'cancelled') {
+        return 'cancelled';
+      } else {
+        return 'upcoming';
+      }
+    }
+
+    // Determine status based on dates and payment
+    if (now < checkInDate) {
+      // Check-in is in the future = upcoming (payment should be pending)
+      return 'upcoming';
+    } else if (now >= checkInDate && now <= checkOutDate) {
+      // Currently between check-in and check-out
+      // If payment completed = completed, otherwise upcoming (pending payment)
+      return paymentStatus === 'completed' ? 'completed' : 'upcoming';
+    } else {
+      // Check-out has passed
+      // Only completed if payment is also completed
+      return paymentStatus === 'completed' ? 'completed' : 'upcoming';
+    }
   };
 
   const paymentStatus = getPaymentStatus(booking);
+  const bookingStatus = getBookingStatus(booking);
 
   return (
     <>
@@ -57,19 +114,19 @@ const ReservationRow = ({ booking }) => {
         </td>
         <td className="px-3 sm:px-6 py-2 sm:py-4 text-xs sm:text-sm">
           <span className={`px-2 sm:px-3 py-1 rounded-full text-xs font-semibold ${
-            booking.status === 'completed' ? 'bg-green-100 text-green-800' :
-            booking.status === 'confirmed' ? 'bg-blue-100 text-blue-800' :
-            booking.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+            bookingStatus === 'completed' ? 'bg-green-100 text-green-800' :
+            bookingStatus === 'upcoming' ? 'bg-yellow-100 text-yellow-800' :
+            bookingStatus === 'cancelled' ? 'bg-red-100 text-red-800' :
             'bg-gray-100 text-gray-800'
           }`}>
-            {booking.status || 'N/A'}
+            {bookingStatus || 'N/A'}
           </span>
         </td>
         <td className="px-3 sm:px-6 py-2 sm:py-4 text-xs sm:text-sm hidden md:table-cell">
           <span className={`px-2 sm:px-3 py-1 rounded-full text-xs font-semibold ${
             paymentStatus === 'completed' ? 'bg-green-100 text-green-800' :
+            paymentStatus === 'cancelled' ? 'bg-red-100 text-red-800' :
             paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-            paymentStatus === 'upcoming' ? 'bg-blue-100 text-blue-800' :
             'bg-gray-100 text-gray-800'
           }`}>
             {paymentStatus}
@@ -106,14 +163,21 @@ const ReservationRow = ({ booking }) => {
               </div>
               <div className="flex flex-col sm:flex-row sm:justify-between gap-1 sm:gap-0">
                 <span className="text-gray-600">Status:</span>
-                <span className="font-medium">{booking.status || 'N/A'}</span>
+                <span className={`font-medium px-2 py-1 rounded text-xs ${
+                  bookingStatus === 'completed' ? 'bg-green-100 text-green-800' :
+                  bookingStatus === 'upcoming' ? 'bg-yellow-100 text-yellow-800' :
+                  bookingStatus === 'cancelled' ? 'bg-red-100 text-red-800' :
+                  'bg-gray-100 text-gray-800'
+                }`}>
+                  {bookingStatus || 'N/A'}
+                </span>
               </div>
               <div className="flex flex-col sm:flex-row sm:justify-between gap-1 sm:gap-0">
                 <span className="text-gray-600">Payment Status:</span>
                 <span className={`font-medium px-2 py-1 rounded text-xs ${
                   paymentStatus === 'completed' ? 'bg-green-100 text-green-800' :
+                  paymentStatus === 'cancelled' ? 'bg-red-100 text-red-800' :
                   paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                  paymentStatus === 'upcoming' ? 'bg-blue-100 text-blue-800' :
                   'bg-gray-100 text-gray-800'
                 }`}>
                   {paymentStatus}

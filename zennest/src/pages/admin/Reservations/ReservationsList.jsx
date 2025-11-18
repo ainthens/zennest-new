@@ -152,18 +152,54 @@ const ReservationsList = ({ showToast }) => {
     return true;
   };
 
+  // Helper function to determine payment status
+  // Simplified to match the 3 main statuses: completed, pending (for upcoming), cancelled
+  const getPaymentStatus = (booking) => {
+    // If booking is cancelled or refunded, payment status is also cancelled
+    if (booking.status === 'cancelled' || booking.status === 'refunded') {
+      return 'cancelled';
+    }
+    
+    // Check if booking is upcoming (check-in date is in the future)
+    // If upcoming, payment status should always be pending, even if payment was processed
+    if (booking.checkIn) {
+      const checkInDate = parseDate(booking.checkIn);
+      const now = new Date();
+      if (checkInDate && now < checkInDate) {
+        return 'pending'; // Always pending for upcoming bookings
+      }
+    }
+    
+    // Payment is "completed" if paymentStatus is 'completed' or paidAmount exists
+    if (booking.paymentStatus === 'completed' || booking.paidAmount !== undefined) {
+      return 'completed';
+    }
+    
+    // For all other cases (pending, scheduled), payment is pending
+    return 'pending';
+  };
+
   // Helper function to determine booking status
+  // Simplified to 3 statuses: completed, upcoming, cancelled
   const getBookingStatus = (booking) => {
-    if (booking.status === 'cancelled') return 'cancelled';
-    if (booking.status === 'pending_approval') return 'pending_approval';
-    if (booking.status === 'pending_cancellation') return 'pending_cancellation';
-    if (booking.status === 'rejected') return 'rejected';
+    // First check: If booking is cancelled or refunded, status is cancelled
+    if (booking.status === 'cancelled' || booking.status === 'refunded') {
+      return 'cancelled';
+    }
+    
+    // Get payment status
+    const paymentStatus = getPaymentStatus(booking);
     
     // Handle bookings without dates (services/experiences)
     if (!booking.checkIn || !booking.checkOut) {
-      if (booking.status === 'confirmed' || booking.status === 'completed') return 'active';
-      if (booking.status === 'pending' || booking.status === 'reserved') return 'upcoming';
-      return 'completed';
+      // For services without dates, check payment status
+      if (paymentStatus === 'completed') {
+        return 'completed';
+      } else if (paymentStatus === 'cancelled') {
+        return 'cancelled';
+      } else {
+        return 'upcoming'; // Pending payment = upcoming
+      }
     }
     
     const now = new Date();
@@ -171,53 +207,42 @@ const ReservationsList = ({ showToast }) => {
     const checkOut = parseDate(booking.checkOut);
     
     if (!checkIn || !checkOut) {
-      if (booking.status === 'confirmed' || booking.status === 'completed') return 'active';
-      if (booking.status === 'pending' || booking.status === 'reserved') return 'upcoming';
-      return 'completed';
+      // Invalid dates - use payment status to determine
+      if (paymentStatus === 'completed') {
+        return 'completed';
+      } else if (paymentStatus === 'cancelled') {
+        return 'cancelled';
+      } else {
+        return 'upcoming';
+      }
     }
 
-    if (now < checkIn) return 'upcoming';
-    if (now >= checkIn && now <= checkOut) return 'active';
-    return 'completed';
-  };
-
-  // Helper function to determine payment status
-  const getPaymentStatus = (booking) => {
-    // Payment is "completed" if paymentStatus is 'completed' or paidAmount exists
-    if (booking.paymentStatus === 'completed' || booking.paidAmount !== undefined) {
-      return 'completed';
-    }
-    
-    // Payment is "pending" if paymentStatus is 'pending' or 'scheduled'
-    if (booking.paymentStatus === 'pending' || booking.paymentStatus === 'scheduled') {
-      return 'pending';
-    }
-    
-    // If booking status is upcoming (check-in in future), payment is also upcoming
-    const bookingStatus = getBookingStatus(booking);
-    if (bookingStatus === 'upcoming') {
+    // Determine status based on dates and payment
+    if (now < checkIn) {
+      // Check-in is in the future = upcoming (payment should be pending)
       return 'upcoming';
+    } else if (now >= checkIn && now <= checkOut) {
+      // Currently between check-in and check-out
+      // If payment completed = completed, otherwise upcoming (pending payment)
+      return paymentStatus === 'completed' ? 'completed' : 'upcoming';
+    } else {
+      // Check-out has passed
+      // Only completed if payment is also completed
+      return paymentStatus === 'completed' ? 'completed' : 'upcoming';
     }
-    
-    // Default to pending if no payment status
-    return booking.paymentStatus || 'pending';
   };
 
   // Filter bookings based on selected status and date range
+  // Only filters by: completed, upcoming, cancelled
   const filteredBookings = useMemo(() => {
     let filtered = [...bookings];
 
-    // Filter by status
+    // Filter by status (only 3 statuses: completed, upcoming, cancelled)
     if (statusFilter !== 'all') {
-      if (statusFilter === 'upcoming') {
-        filtered = filtered.filter(booking => {
-          const bookingStatus = getBookingStatus(booking);
-          const paymentStatus = getPaymentStatus(booking);
-          return bookingStatus === 'upcoming' && paymentStatus !== 'completed';
-        });
-      } else {
-        filtered = filtered.filter(booking => getBookingStatus(booking) === statusFilter);
-      }
+      filtered = filtered.filter(booking => {
+        const bookingStatus = getBookingStatus(booking);
+        return bookingStatus === statusFilter;
+      });
     }
 
     // Filter by date range
@@ -519,12 +544,9 @@ const ReservationsList = ({ showToast }) => {
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-emerald-200 focus:border-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <option value="all">All Reservations</option>
-              <option value="upcoming">Upcoming (with pending payment)</option>
-              <option value="active">Active</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
-              <option value="pending_approval">Pending Approval</option>
-              <option value="rejected">Rejected</option>
+              <option value="completed">Completed (payment completed)</option>
+              <option value="upcoming">Upcoming (payment pending)</option>
+              <option value="cancelled">Cancelled (payment cancelled)</option>
             </select>
           </div>
 
@@ -590,9 +612,19 @@ const ReservationsList = ({ showToast }) => {
         <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="text-xs sm:text-sm text-gray-600">
             Showing {filteredBookings.length} of {bookings.length} reservation{bookings.length !== 1 ? 's' : ''}
+            {statusFilter === 'completed' && (
+              <span className="block sm:inline sm:ml-2 text-emerald-600 font-medium">
+                (payment completed)
+              </span>
+            )}
             {statusFilter === 'upcoming' && (
               <span className="block sm:inline sm:ml-2 text-emerald-600 font-medium">
-                (upcoming bookings with pending/upcoming payment)
+                (payment pending)
+              </span>
+            )}
+            {statusFilter === 'cancelled' && (
+              <span className="block sm:inline sm:ml-2 text-emerald-600 font-medium">
+                (payment cancelled)
               </span>
             )}
           </div>
@@ -647,7 +679,7 @@ const ReservationsList = ({ showToast }) => {
                       <td colSpan="9" className="px-3 sm:px-6 py-6 sm:py-8 text-center text-gray-500 text-xs sm:text-sm">
                         {bookings.length === 0 
                           ? 'No reservations found' 
-                          : `No ${statusFilter === 'all' ? '' : statusFilter === 'upcoming' ? 'upcoming (with pending payment) ' : statusFilter.replace('_', ' ')} reservations found`}
+                          : `No ${statusFilter === 'all' ? '' : statusFilter} reservations found`}
                         {dateRange.startDate || dateRange.endDate ? ' for the selected date range' : ''}
                       </td>
                     </tr>
